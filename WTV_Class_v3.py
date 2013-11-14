@@ -247,6 +247,34 @@ class Day(Database):
       gotServices.append(str(service[0]))
     return gotServices
   
+  def plotModeSplit_NVD3(self, databaseObj, city):
+    '''
+    A Day method that uses the Python-nvd3 library to plot a pie chart showing the break-down of vehicle modes (number of services) in Day.
+    E.g., could be useful to show how a city changes over time as new modes or lines are added, or compare a Sunday against a Monday.
+    '''
+    from nvd3 import pieChart
+    output_file = open('test-nvd3_pie.html', 'w')
+    type='pieChart'
+    title1 = "Public Transport Trips by Mode"
+    title2 = "%s, %s, %s.%s.%s" % (city, self.dayOfWeekStr.title(), self.day, self.month, self.year)
+    chart = pieChart(name=type, color_category='category20c', height=400, width=400)
+    chart.set_containerheader("\n\n<h2>" + title1 + "</h2>\n<h3>" + title2 + "</h3>\n\n\n")
+    
+    xdata, ydata = [], []
+    modeobjs = databaseObj.getAllModes()
+    for mode in modeobjs:
+      xdata.append(mode.modetype)
+      ydata.append(int(mode.countTripsModeInDay(self)))
+
+    extra_serie = {"tooltip": {"y_start": "", "y_end": " trips"}}
+    chart.add_serie(y=ydata, x=xdata, extra=extra_serie)
+    chart.buildhtml()
+    
+    output_file.write(chart.htmlcontent)    
+    output_file.close()
+    return None
+    
+  
 class Mode(Database):
   '''
   A class of vehicle that has particular properties it does not share with other vehicles.
@@ -475,7 +503,7 @@ class Route(Agency):
     '''
     Given a Day object, <DayObj>, this method returns an Integer count of all the trips of this route on that Day.
     '''
-    q = Template('SELECT COUNT (DISTINCT T.trip_id) FROM routes AS R JOIN trips AS T ON R.route_id = T.route_id JOIN calendar AS C ON T.service_id = C.service_id WHERE R.route_id ="$route_id" AND C.start_Date <= "$day" AND C.end_date >= "$nextday" AND C.$dayText = 1')
+    q = Template('SELECT COUNT (DISTINCT T.trip_id) FROM routes AS R JOIN trips AS T ON R.route_id = T.route_id JOIN calendar AS C ON T.service_id = C.service_id WHERE R.route_id ="$route_id" AND C.start_date <= "$day" AND C.end_date >= "$nextday" AND C.$dayText = 1')
     query = q.substitute(route_id = self.route_id, day = DayObj.isoDate[0:10], nextday = DayObj.tomorrow[0:10], dayText = DayObj.dayOfWeekStr)
     self.cur.execute(query)
     return self.cur.fetchall()[0][0]
@@ -698,7 +726,7 @@ class Stop(Database):
 
 # Testing Objects
 myDatabase = Database(myDB)
-myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 11, 13))
+myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 11, 17))
 myPTService = PTService(myDB, service_id=1)
 myPTTrip = PTTrip(myDB, trip_id=2365) # 4650=A 130 bus # 6434=A HVL train
 ##myRoute = Route(myDB, route_id="WBBO047O") # Not working correctly, because this service only runs during trimester times.
@@ -708,6 +736,7 @@ myMode = Mode(myDB, "Bus")
 myAgency = Agency(myDB, "RAIL")
 myStop = Stop(myDB, 10619) # Petone Station Stop B (A = 22118; Train station (PETO) = 11709; Petone Wharf = 22940)
 
+'''
 # Examples of each object, and a sample method.
 print "myDay: cancelled services: ", myDay.getCanxServices()
 print "myPTService: routes: ", myPTService.getRoutes_PTService()
@@ -729,7 +758,7 @@ myPTTrip.plotShapelyLine()
 for i in myPTTrip.getStopsInSequence():
   print i.getStopTime(myPTTrip)["arrival_time"], i.getStopName()
   
-'''
+
 # For each day in November 2013, reports how many routes are in operation, broken down by mode.
 for i in range(1, 30):
   myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 11, i))
@@ -740,9 +769,9 @@ for i in range(1, 30):
       print "%s\t\t%s\t%s" % (mode.modetype, myDay.dayOfWeekStr.title(), mode.countRoutesModeInDay(myDay))
   print ""
 '''
+myDay.plotModeSplit_NVD3(myDatabase, "Greater Wellington")
+print "finished"
 
 ################################################################################
 ################################ End ###########################################
 ################################################################################
-
-# This is a comment added here.
