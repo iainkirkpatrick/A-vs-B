@@ -640,6 +640,38 @@ class PTTrip(Route):
     for stop_time in self.cur.fetchall():
       stops.append(Stop(self.database, stop_time[0]))
     return stops
+  
+  def animateTrip(self):
+    '''
+    Uses matplotlib.animate to animate the route a trip takes.
+    '''
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import matplotlib.animation as animation
+    
+    def update_line(num, data, line):
+        line.set_data(data[...,:num])
+        return line,
+    
+    fig1 = plt.figure()
+    
+    x, y = [],[]
+    for vertex in list(self.getShapelyLine().coords):
+      x.append(vertex[0])
+      y.append(vertex[1])
+    
+    data = np.array([x, y])
+    
+    l, = plt.plot([], [], 'r-')
+    plt.xlim(min(data[0])-0.01, max(data[0])+0.01)
+    plt.ylim(min(data[1]-0.01), max(data[1])+0.01)
+    plt.xlabel('x')
+    plt.title('test')
+    line_ani = animation.FuncAnimation(fig1, update_line, len(x), fargs=(data, l),
+        interval=150, blit=True)
+    line_ani.save('test130bus.mp4')
+    
+    return plt.show()    
 
 class Stop(Database):
   '''
@@ -728,7 +760,7 @@ class Stop(Database):
 myDatabase = Database(myDB)
 myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 11, 17))
 myPTService = PTService(myDB, service_id=1)
-myPTTrip = PTTrip(myDB, trip_id=2365) # 4650=A 130 bus # 6434=A HVL train
+myPTTrip = PTTrip(myDB, trip_id=4650) # 4650=A 130 bus # 6434=A HVL train
 ##myRoute = Route(myDB, route_id="WBBO047O") # Not working correctly, because this service only runs during trimester times.
 ##myRoute = Route(myDB, route_id="WBBO300O") # Not working correctly, because this service only runs on the last Sunday of each month, but this says it runs once each Sunday.
 myRoute = Route(myDB, route_id="WBAO023O")
@@ -769,8 +801,15 @@ for i in range(1, 30):
       print "%s\t\t%s\t%s" % (mode.modetype, myDay.dayOfWeekStr.title(), mode.countRoutesModeInDay(myDay))
   print ""
 '''
+'''
 myDay.plotModeSplit_NVD3(myDatabase, "Greater Wellington")
 print "finished"
+'''
+
+for stop in myPTTrip.getStopsInSequence():
+  print stop.getShapelyPoint().x, stop.getShapelyPoint().y
+  
+myPTTrip.animateTrip()
 
 ################################################################################
 ################################ End ###########################################
