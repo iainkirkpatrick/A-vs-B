@@ -53,6 +53,8 @@
 #                           > getService()                    ::Returns the PTService object that includes this trip::
 #                           > getShapelyLine()                ::Returns a Shapely Line object representing the shape of the trip::
 #                           > plotShapelyLine()               ::Uses matplotlib and Shapely to plot the shape of the trip. Does not plot stops (yet?)::
+#                           > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
+#                           > animateTrip()                   :Needs improvement:Uses maptplotlib.animate and self.getShapelyLine() to animate the drawing of a trip's route. Does not account for stops (yet?)::
 
 #                         Stop(Object)                        ::A place where PT vehicles stop within a route::
 #                           > __init__(database, stop_id)     ::<database> is a Database object. <stop_id> is an Integer identifying the trip uniquely, able to link it to stop_times. See the database::
@@ -641,35 +643,66 @@ class PTTrip(Route):
       stops.append(Stop(self.database, stop_time[0]))
     return stops
   
-  def animateTrip(self):
+  def animateTrip(self, save=False):
     '''
     Uses matplotlib.animate to animate the route a trip takes.
+    Needs improvement: at the moment the 'speed' is simply determined by the density of vertices, and nothing else.
     '''
     import numpy as np
     import matplotlib.pyplot as plt
     import matplotlib.animation as animation
     
     def update_line(num, data, line):
-        line.set_data(data[...,:num])
-        return line,
-    
-    fig1 = plt.figure()
-    
+      '''
+      Function that makes the animation happen.
+      This is called sequentially, acccording to num
+      '''
+      line.set_data(data[...,num-1:num])
+      # [...,:num]=everything, revealed in sequence 
+      # [...,num-1:num]=only the most recent segment, nothing else is shown in each frame
+      
+      time_text.set_text("Frame="+str(num))
+      
+      # Returns the line object, which is important because this tells the animator
+      # which object on the plit to update after each frame.
+      # Note that it is returning a tuple of the plot ojects which have been modified
+      # (added, in this case), and are therefore animated.
+      return line, time_text,
+                   
+    fig1 = plt.figure() # Create a figure window
+    ax = fig1.add_subplot(111, aspect='equal', autoscale_on=True)
+    # Text to be updated with the animation
+    time_text = ax.text(0.02, 0.90, '', transform=ax.transAxes)
+
+    # Get the x,y data in two parallel lists, and place them in a numpy array
     x, y = [],[]
     for vertex in list(self.getShapelyLine().coords):
       x.append(vertex[0])
       y.append(vertex[1])
-    
     data = np.array([x, y])
     
-    l, = plt.plot([], [], 'r-')
+    # A line object that will be modified in the animation
+    # It first plots an empty line: data is added later
+    l, = plt.plot([], [], 'r.') # Color=r, line style=-
+    
+    time_text.set_text('')
+    
     plt.xlim(min(data[0])-0.01, max(data[0])+0.01)
     plt.ylim(min(data[1]-0.01), max(data[1])+0.01)
-    plt.xlabel('x')
-    plt.title('test')
+    plt.xlabel('longitude')
+    plt.ylabel('latitude')
+    plt.title('Test: Naenae-Petone 130 Bus Animation')
+    
+    # The line object needs to persist, so it is assigned to a variable, line_ani
+    # interval: N miliseconds delay between frames
+    # blit: tells the animation to only re-draw the pieces of the plot that have changed...
+        # which saves a lot of time and makes the animation display much more quickly.
     line_ani = animation.FuncAnimation(fig1, update_line, len(x), fargs=(data, l),
-        interval=150, blit=True)
-    line_ani.save('test130bus.mp4')
+        interval=20, blit=False)
+    # For some reason blit=True keeps a zero underneath the text...
+    
+    if save == True:
+      line_ani.save('test130bus.mp4')
     
     return plt.show()    
 
@@ -806,9 +839,7 @@ myDay.plotModeSplit_NVD3(myDatabase, "Greater Wellington")
 print "finished"
 '''
 
-for stop in myPTTrip.getStopsInSequence():
-  print stop.getShapelyPoint().x, stop.getShapelyPoint().y
-  
+# Animate with matplotlib
 myPTTrip.animateTrip()
 
 ################################################################################
