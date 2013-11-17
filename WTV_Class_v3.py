@@ -12,6 +12,8 @@
 #                           > feedDateRange()                 ::Returns a tuple of two datetime objects, representing [0] the start date of the feed and [1] the end date of the feed::
 #                           > getAllModes()                   ::Returns a list of Mode objects, one for each type of route_type_desc in the GTFS (routes table)::
 #                           > getAgencies()                   ::Returns cur.fetchall() of the agency table::
+#                           > getAllTrips(DayObj)             ::Returns a list of PTTrip objects representing those trips that run at least once on <DayObj>::
+#                           > getSittingStops(second, DayObj) ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>::
 
 #                         Day(Database)                       ::A date. PT runs by daily schedules, considering things like whether it is a weekday, etc::
 #                           > __init__(database, datetimeObj) ::<database> is a Database object. <datetimeObj> is a datetime object::
@@ -55,7 +57,7 @@
 #                           > plotShapelyLine()               ::Uses matplotlib and Shapely to plot the shape of the trip. Does not plot stops (yet?)::
 #                           > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
 #                           > animateTrip()                   :Needs improvement:Uses maptplotlib.animate and self.getShapelyLine() to animate the drawing of a trip's route. Does not account for stops (yet?)::
-
+#                           > whereIsVehicle(second, DayObj)  ::Returns a tuple (x, y) or (lon, lat) of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object::
 #                         Stop(Object)                        ::A place where PT vehicles stop within a route::
 #                           > __init__(database, stop_id)     ::<database> is a Database object. <stop_id> is an Integer identifying the trip uniquely, able to link it to stop_times. See the database::
 #                           > getStopCode()                   ::Returns the stop_code, a short(er) integer version similar to stop_id, but published on signs and used in passenger text alerts::
@@ -183,7 +185,134 @@ class Database(object):
     '''
     self.cur.execute('SELECT * FROM agency')
     return self.cur.fetchall()
+  
+  def getAllTrips(self, dayObj):
+    '''
+    Given a particular <DayObj>, returns a list of PTTrip objects that run on that day.
+    '''
+    self.cur.execute('SELECT DISTINCT trip_id FROM trips')
+    
+    trips = []
+    for trip in self.cur.fetchall():
+      pttrip = PTTrip(self.database, trip[0])
+      if pttrip.doesRouteRunOn:
+        trips.append(pttrip)
+    return trips
+  
+  def getSittingStops(self, second, dayObj):
+    '''
+    Given a particular <second> (hh:mm:ss) in a <dayObj>, returns a list of the XY positions of any
+    public transport stops that any vehicle is currently sitting at.
+    '''
+    hour, mins, secs, ssecs = str(second.hour), str(second.minute), str(second.second), str(second.microsecond)
+    if len(hour) == 1:
+      hour = "0" + hour
+    if len(mins) == 1:
+      mins = "0" + mins
+    if len(secs) == 1:
+      secs = "0" + secs
+    if len(ssecs) == 1:
+      ssecs = "00" + ssecs
+    if len(ssecs) == 2:
+      ssecs = "0" + ssecs
+      
+    sittingstops = []
+    q = Template('SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text FROM stop_times AS ST JOIN stops AS S ON ST. stop_id = S.stop_id WHERE arrival_time = "$second" OR departure_time = "$second" OR (arrival_time  < "$second" AND departure_time > "$second")')
+    query = q.substitute(second = hour + ":" + mins + ":" + secs + "." + ssecs)
+    self.cur.execute(query)
+    for sittingstop in self.cur.fetchall():
+      if PTTrip(self.database, str(sittingstop[2])).doesRouteRunOn(dayObj): # If the route actually runs on the day 
+        sittingstop = {"stop_lat":sittingstop[0], "stop_lon":sittingstop[1], "trip_id":sittingstop[2], "stop_id":sittingstop[3], "pickup_type_text":sittingstop[4], "drop_off_type_text":sittingstop[5]}
+        sittingstops.append(sittingstop)
+    return sittingstops
+  
+  def animateSystem(self, DayObj, starttime=datetime.time(8), endtime=datetime.time(8, 1), interval=1):
+    '''
+    Displays (and can save) a video of the entire PT system, at intervals of <interval> (in seconds).
+    Use interval=1 for best results, as scheduled stops are recorded to the nearest second.
+    By default, visualises the system between 8am and 9am.
+    
+    Uses matplotlib, matplotlib.basemap, and matplotlib.animate.
+    
+    ATM: IT'S FUCKED
+    '''
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import matplotlib.animation as animation
+    
+    def update_line(num, outer, line):
+      '''
+      Function that makes the animation happen.
+      This is called sequentially, acccording to num
+      '''
+      global globali
+      x = outer[globali][0]
+      y = outer[globali][1]
+      globali += 1
+      #line.set_data(data[...,:num])
+      line.set_data(x, y)
+      # [...,:num]=everything, revealed in sequence 
+      # [...,num-1:num]=only the most recent segment, nothing else is shown in each frame
+      time_text.set_text(datetime.datetime.combine(DayObj.datetimeObj, starttime) + datetime.timedelta(seconds=globali*interval))
+      return line, time_text,
+    
+    fig1 = plt.figure() # Create a figure window
+    ax = fig1.add_subplot(111, aspect='equal', autoscale_on=True)
+    # Text to be updated with the animation
+    time_text = ax.text(0.02, 0.90, '', transform=ax.transAxes)
+    
+    # Get the x,y data of the stops in two parallel lists, and place them numpy arrays
+    outer = []
+    # number of seconds in the interval
+    timeDelta = datetime.datetime.combine(DayObj.datetimeObj, endtime) - datetime.datetime.combine(DayObj.datetimeObj, starttime) # Computes time difference
+    timeDelta = timeDelta.seconds # Returns the value purely in seconds
+    minx, maxx, miny, maxy = None, None, None, None
+    # for each second in the interval, add a list of the points, then add the whole lot to a numpy array
+    for i in range(0, timeDelta, interval):
+      stopx, stopy = [], []
+      currentTime = datetime.datetime.combine(DayObj.datetimeObj, starttime) + datetime.timedelta(seconds=i)
+      for stop in self.getSittingStops(datetime.time(currentTime.hour, currentTime.minute, currentTime.second, currentTime.microsecond), DayObj):
+        stopx.append(stop['stop_lon'])
+        stopy.append(stop['stop_lat'])
+        
+        if stop['stop_lon'] < minx or minx is None:
+          minx = stop['stop_lon']
+        if stop['stop_lon'] > maxx or maxx is None:
+          maxx = stop['stop_lon']
+        if stop['stop_lat'] < miny or miny is None:
+          miny = stop['stop_lat']
+        if stop['stop_lat'] > maxy or maxy is None:
+          maxy = stop['stop_lat']
+          
+        data = np.array([stopx, stopy])
+        outer.append(data)
+      
+    
+    l, = plt.plot([], [], 'r.')
+    
+    time_text.set_text('')
+    plt.xlim(minx-0.01, maxx+0.01)
+    plt.ylim(miny-0.01, maxy+0.01)
+    plt.xlabel('longitude')
+    plt.ylabel('latitude')
+    plt.title('Test: Buses at time point')   
+    
+    line_ani = animation.FuncAnimation(fig1, update_line, int(timeDelta/float(interval)), fargs=(outer, l),
+                                       interval=500, blit=False)
+    
+    return plt.show()
+    '''
+    # Get the x,y data in two parallel lists, and place them in numpy arrays
+    vehiclex, vehicley = [], []
+    for trip in self.getAllTrips(DayObj):
+      location = trip.whereIsVehicle(datetime.time(8, 30, 20), DayObj)
+      if location is not None:
+        vehiclex.append(location[0])
+        vehicley.append(location[1])
+    '''
+    
 
+      
 class Day(Database):
   '''
   A date. PT runs by daily schedules, considering things like whether it is a weekday, etc.
@@ -643,6 +772,94 @@ class PTTrip(Route):
       stops.append(Stop(self.database, stop_time[0]))
     return stops
   
+  def whereIsVehicle(self, second, DayObj):
+    '''
+    Returns an XY position of the vehicle at a given moment in time (<second>) on <dayObj>.
+    If the trip does not run, is yet to run, or has already run, it returns None.
+    Vehicle locations are "known" at scheduled arrivals, otherwise position is interpolated along their shape.
+    
+    <second> is a datetime.time object.
+    '''
+    try:
+      # First, check if the trip even operates on <DayObj>
+      if self.doesRouteRunOn(DayObj):
+        
+        # Get all the stops that the trip visits
+        q = Template('SELECT ST.*, S.stop_lat, S.stop_lon FROM stop_times AS ST JOIN stops AS S ON S.stop_id = ST.stop_id WHERE trip_id = $trip_id ORDER BY stop_sequence')
+        query = q.substitute(trip_id = self.trip_id)
+        self.cur.execute(query)
+        stop_times = self.cur.fetchall()
+        
+        # Check if the trip is even operating at <second>
+        overall_start = datetime.time(int(stop_times[0][1][0:2]), int(stop_times[0][1][3:5]), int(stop_times[0][1][6:8]), int(stop_times[0][1][9:12]))
+        overall_end = datetime.time(int(stop_times[-1][2][0:2]), int(stop_times[-1][2][3:5]), int(stop_times[-1][2][6:8]), int(stop_times[-1][2][9:12]))
+        if second >= overall_start and second <= overall_end:
+          # Then the trip is operating at <second>
+          # Now, refine the precise position using scheduled times.
+          
+          i = 0 # index the stop searching so we can query the next stop in the sequence
+          for stop in stop_times:
+            arrival1 = datetime.time(int(stop[1][0:2]), int(stop[1][3:5]), int(stop[1][6:8]), int(stop[1][9:12]))
+            departure1 = datetime.time(int(stop[2][0:2]), int(stop[2][3:5]), int(stop[2][6:8]), int(stop[2][9:12]))
+            if second >= arrival1 and second <= departure1:
+              # If the trip dwells at the stop and second is within the dwell time range,
+              # Return the X, Y of the current stop because we have found the vehicle.
+              return (stop[12], stop[11]) # lon, lat
+            arrival2 = datetime.time(int(stop_times[i+1][1][0:2]), int(stop_times[i+1][1][3:5]), int(stop_times[i+1][1][6:8]), int(stop_times[i+1][1][9:12]))
+            departure2 = datetime.time(int(stop_times[i+1][2][0:2]), int(stop_times[i+1][2][3:5]), int(stop_times[i+1][2][6:8]), int(stop_times[i+1][2][9:12]))
+            if second >= arrival2 and second <= departure2:
+              # If the trip dwells at the next stop and second is within the dweel time range,
+              # Return the X, Y of the next stop because we have found the vehicle.
+              return (stop_times[i+1][12], stop_times[i+1][11]) # lon, lat
+            if second > departure1 and second < arrival2:
+              # If the vehicle is after the first stop but has not yet arrived at the second stop,
+              # Then the vehicle is between the two stops,
+              # And the task is to infer its location based on distance and time.
+              
+              # How many seconds ahead of the departure from stop 1 is <second>?
+              secondsahead = datetime.datetime.combine(myDay.datetimeObj, second) - datetime.datetime.combine(myDay.datetimeObj, departure1)
+              secondsahead = float(secondsahead.seconds)
+              
+              # How many seconds does it take for the vehicle to travel from stop 1 to stop 2?
+              timeDelta = datetime.datetime.combine(myDay.datetimeObj, arrival2) - datetime.datetime.combine(myDay.datetimeObj, arrival1) # Computes time difference
+              timeDelta = float(timeDelta.seconds) # Returns the value purely in seconds
+              
+              # Therefore, as a proportion of the travel time between stop 1 and stop 2,
+              # how far has the vehicle progressed?
+              time_ans = secondsahead / timeDelta
+              
+              # How far is stop 1 from the beginning of the route?
+              stop1Dist = stop[10]
+              
+              # What is the road distance between stop 1 and stop 2?
+              diffDist = stop_times[i+1][10] - stop1Dist
+              
+              # Therefore, in distance units, how far along the trip is the vehicle?
+              dist_ans = stop1Dist + (time_ans * diffDist)
+              
+              # How long is the trip, in total?
+              totaltripdist = float(stop_times[-1][10])
+              
+              # Finally, what proportion of the route has the vehicle travelled?
+              proportionTravelled = dist_ans/totaltripdist
+              
+              # With that, we can interpolate the vehicle's XY position
+              routeShape = self.getShapelyLine()
+              interpolatedPosition = routeShape.interpolate(proportionTravelled * self.getShapelyLine().length)
+              return (interpolatedPosition.x, interpolatedPosition.y) # lon, lat
+            
+            i += 1
+            # If the vehicle is not at or between 1 or 2, then the for loop proceeds to consider stops 2 and 3, until a 
+            # solution is found.
+            
+      else:
+        return None
+      
+    except ValueError:
+      # If ValueError, the time is beyond 24:00:000...
+      # Address this later.
+      return None
+      
   def animateTrip(self, save=False):
     '''
     Uses matplotlib.animate to animate the route a trip takes.
@@ -840,7 +1057,15 @@ print "finished"
 '''
 
 # Animate with matplotlib
-myPTTrip.animateTrip()
+##myPTTrip.animateTrip()
+
+##print myDatabase.getSittingStops(datetime.time(8, 59, 0, 0), myDay)
+
+##print myPTTrip.whereIsVehicle(datetime.time(7, 26, 12, 543), myDay)
+
+globali = 0
+myDatabase.animateSystem(myDay)
+
 
 ################################################################################
 ################################ End ###########################################
