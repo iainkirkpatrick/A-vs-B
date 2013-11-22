@@ -108,10 +108,15 @@ Before using script change filepath for database (db_pathstr) and potentially na
 from string import Template
 import datetime
 
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import numpy as np
+
 from shapely.geometry import Point, LineString
 
 import sqlite3 as dbapi
-db_str = "GTFSSQL_Wellington_20131112_144855.db" # Name of database
+#db_str = "GTFSSQL_Wellington_20131112_144855.db" # Name of database
+db_str = "GTFSSQL_Wellington_20131122_220438__SUBSET__.db"
 #db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB, change to necessary filepath
 db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB, change to necessary filepath
 myDB = dbapi.connect(db_pathstr) # Connect to DB
@@ -226,7 +231,7 @@ class Database(object):
         sittingstops.append(sittingstop)
     return sittingstops
   
-  def animateSystem(self, DayObj, starttime=datetime.time(8), endtime=datetime.time(8, 1), interval=1):
+  def animateSystem(self, DayObj, starttime=datetime.time(8), endtime=datetime.time(8, 1), interval=60):
     '''
     Displays (and can save) a video of the entire PT system, at intervals of <interval> (in seconds).
     Use interval=1 for best results, as scheduled stops are recorded to the nearest second.
@@ -236,82 +241,77 @@ class Database(object):
     
     ATM: IT'S FUCKED
     '''
+    alltrips = self.getAllTrips(DayObj)
+    def xylims():
+      '''
+      Gets the X and Y limits of the graph,
+      defined as the max/min XY of all trips on the day.
+      '''
+      minx, miny, maxx, maxy = None, None, None, None
+      for trip in alltrips:
+        bounds = trip.getShapelyLine().bounds # (minx, miny, maxx, maxy)
+        if bounds[0] < minx or minx is None:
+          minx = bounds[0]
+        if bounds[1] < miny or miny is None:
+          miny = bounds[1]
+        if bounds[2] > maxx or maxx is None:
+          maxx = bounds[2]
+        if bounds[3] > maxy or maxy is None:
+          maxy = bounds[3]
+      return (minx, miny, maxx, maxy)
+    
     import numpy as np
     import matplotlib.pyplot as plt
-    import matplotlib.animation as animation
     
-    def update_line(num, outer, line):
-      '''
-      Function that makes the animation happen.
-      This is called sequentially, acccording to num
-      '''
-      global globali
-      x = outer[globali][0]
-      y = outer[globali][1]
-      globali += 1
-      #line.set_data(data[...,:num])
-      line.set_data(x, y)
-      # [...,:num]=everything, revealed in sequence 
-      # [...,num-1:num]=only the most recent segment, nothing else is shown in each frame
-      time_text.set_text(datetime.datetime.combine(DayObj.datetimeObj, starttime) + datetime.timedelta(seconds=globali*interval))
-      return line, time_text,
+    fig, ax = plt.subplots()
+    ax.set_aspect('equal')
     
-    fig1 = plt.figure() # Create a figure window
-    ax = fig1.add_subplot(111, aspect='equal', autoscale_on=True)
-    # Text to be updated with the animation
-    time_text = ax.text(0.02, 0.90, '', transform=ax.transAxes)
-    
-    # Get the x,y data of the stops in two parallel lists, and place them numpy arrays
-    outer = []
-    # number of seconds in the interval
-    timeDelta = datetime.datetime.combine(DayObj.datetimeObj, endtime) - datetime.datetime.combine(DayObj.datetimeObj, starttime) # Computes time difference
-    timeDelta = timeDelta.seconds # Returns the value purely in seconds
-    minx, maxx, miny, maxy = None, None, None, None
-    # for each second in the interval, add a list of the points, then add the whole lot to a numpy array
-    for i in range(0, timeDelta, interval):
-      stopx, stopy = [], []
-      currentTime = datetime.datetime.combine(DayObj.datetimeObj, starttime) + datetime.timedelta(seconds=i)
-      for stop in self.getSittingStops(datetime.time(currentTime.hour, currentTime.minute, currentTime.second, currentTime.microsecond), DayObj):
-        stopx.append(stop['stop_lon'])
-        stopy.append(stop['stop_lat'])
-        
-        if stop['stop_lon'] < minx or minx is None:
-          minx = stop['stop_lon']
-        if stop['stop_lon'] > maxx or maxx is None:
-          maxx = stop['stop_lon']
-        if stop['stop_lat'] < miny or miny is None:
-          miny = stop['stop_lat']
-        if stop['stop_lat'] > maxy or maxy is None:
-          maxy = stop['stop_lat']
-          
-        data = np.array([stopx, stopy])
-        outer.append(data)
-      
-    
-    l, = plt.plot([], [], 'r.')
-    
-    time_text.set_text('')
-    plt.xlim(minx-0.01, maxx+0.01)
-    plt.ylim(miny-0.01, maxy+0.01)
-    plt.xlabel('longitude')
-    plt.ylabel('latitude')
-    plt.title('Test: Buses at time point')   
-    
-    line_ani = animation.FuncAnimation(fig1, update_line, int(timeDelta/float(interval)), fargs=(outer, l),
-                                       interval=500, blit=False)
-    
-    return plt.show()
-    '''
-    # Get the x,y data in two parallel lists, and place them in numpy arrays
-    vehiclex, vehicley = [], []
-    for trip in self.getAllTrips(DayObj):
-      location = trip.whereIsVehicle(datetime.time(8, 30, 20), DayObj)
-      if location is not None:
-        vehiclex.append(location[0])
-        vehicley.append(location[1])
-    '''
-    
+    stopx, stopy, vehiclex, vehicley = [], [], [], []
 
+    # range = seconds between start and endtimes
+    for t in range(0, 10):
+      if t == 0:
+        points, = ax.plot(stopx, stopy, marker='.', linestyle='None')
+        points2, = ax.plot(vehiclex, vehicley, marker='o', color='r', linestyle='None')
+        
+        ## (minx, miny, maxx, maxy)
+        ##bounds = xylims()
+        ##bounds = (174.7212282, -41.34865225, 175.6846043, -38.84426454)
+        bounds = (174.7212282, -41.34865225, 175, -41.0)
+        ax.set_xlim(bounds[0], bounds[2])
+        ax.set_ylim(bounds[1], bounds[3])
+        
+      else:
+        currenttime = (datetime.datetime.combine(DayObj.datetimeObj, starttime) + datetime.timedelta(seconds=interval*(t-1)))
+        #currentTime = starttime + datetime.timedelta(seconds=interval)
+        # while starttime < endtime
+        
+        for stop in self.getSittingStops(datetime.time(currenttime.hour, currenttime.minute, currenttime.second, currenttime.microsecond), DayObj):
+          stopx.append(stop['stop_lon'])
+          stopy.append(stop['stop_lat'])
+        new_x = np.array(stopx)
+        new_y = np.array(stopy)
+        
+        i = 0
+        for trip in alltrips:
+          if i > 10:
+            break
+          if trip.doesRouteRunOn(DayObj):
+            position = trip.whereIsVehicle((datetime.time(currenttime.hour, currenttime.minute, currenttime.second, currenttime.microsecond)), DayObj)
+            if position is not None:
+              vehiclex.append(position[0])
+              vehicley.append(position[1])
+              i += 1
+        new_vehiclex = np.array(vehiclex)
+        new_vehicley = np.array(vehicley)
+        
+        points.set_data(new_x, new_y)
+        points2.set_data(new_vehiclex, new_vehicley)
+        
+        stopx, stopy, vehiclex, vehicley = [], [], [], []
+        
+        print currenttime, t, points
+      plt.pause(0.01)
       
 class Day(Database):
   '''
@@ -714,6 +714,16 @@ class PTTrip(Route):
       shape_id = self.getShapeID().replace('\n','') # Metlink includes line breaks
     except:
       shape_id = self.getShapeID()
+    
+    try:
+      shape_id = shape_id.replace('\r','') # Metlink includes line breaks
+    except:
+      shape_id = shape_id
+    
+    while shape_id[-1:] == " " or shape_id[-1:] == '\n' or shape_id[-1:] == '\r':
+      # Still some issue with trailing spaces
+      shape_id = shape_id[:-1]
+      
     q = Template('SELECT shape_pt_lon, shape_pt_lat FROM shapes WHERE shape_id = "$shape_id" ORDER BY shape_pt_sequence')
     query = q.substitute(shape_id = shape_id)
     self.cur.execute(query)
@@ -779,6 +789,8 @@ class PTTrip(Route):
     Vehicle locations are "known" at scheduled arrivals, otherwise position is interpolated along their shape.
     
     <second> is a datetime.time object.
+    
+    Returns a (lon, lat) tuple.
     '''
     try:
       # First, check if the trip even operates on <DayObj>
@@ -1001,11 +1013,137 @@ class Stop(Database):
     stop_time = self.cur.fetchall()[0]
     stop_time = {"stop_sequence":int(stop_time[0]), "arrival_time":stop_time[1], "departure_time":stop_time[2], "pickup_type_text":stop_time[3], "drop_off_type_text":stop_time[4], "shape_dist_traveled":float(stop_time[5])}
     return stop_time
+  
+class AnimatedScatter(object):
+    """
+    An animated scatter plot using matplotlib.animations.FuncAnimation.
+    http://stackoverflow.com/questions/9401658/matplotlib-animating-a-scatter-plot
+    """
+    def __init__(self, DatabaseObj, DayObj, starttime=datetime.time(13), interval=30*60):
+        self.stream = self.data_stream(currenttime=starttime)
+        self.db = DatabaseObj
+        self.day = DayObj
+        self.starttime = starttime
+        self.interval = interval
+        self.t = 0 # How many intervals have been animated?
+        self.bounding = True # Let it determine the bounds for itself (expensive)
+        
+        self.alltrips = self.db.getAllTrips(self.day)
+
+        # Setup the figure and axes...
+        self.fig, self.ax = plt.subplots()
+        
+        # Then setup FuncAnimation.
+        self.ani = animation.FuncAnimation(self.fig, self.update, frames=10, interval=0.1, 
+                                           init_func=self.setup_plot, blit=True)
+        anim = self.ani
+        
+    def setup_plot(self):
+        """Initial drawing of the scatter plot."""
+        x, y, s, c = next(self.stream, self.starttime)
+        self.scat = self.ax.scatter(x, y, c=c, s=s, animated=True)
+        
+        minx, maxx, miny, maxy = None, None, None, None
+        if self.bounding == False:
+          for trip in self.alltrips:
+            boundbox = trip.getShapelyLine().bounds # (minx, miny, maxx, maxy)
+            if boundbox[0] < minx or minx is None:
+              minx = boundbox[0]
+            if boundbox[1] < miny or miny is None:
+              miny = boundbox[1]
+            if boundbox[2] > maxx or maxx is None:
+              maxx = boundbox[2]
+            if boundbox[3] > maxy or maxy is None:
+              maxy = boundbox[3]
+          self.ax.axis([minx, maxx, miny, maxy])
+          self.bounding = True
+        else:
+          minx, miny, maxx, maxy = 174.7212282, -41.34865225, 175, -41.0
+          self.ax.axis([minx, maxx, miny, maxy])
+        
+        self.ax.set_aspect = 'equal'
+
+        # For FuncAnimation's sake, we need to return the artist we'll be using
+        # Note that it expects a sequence of artists, thus the trailing comma.
+        return self.scat,
+
+    def data_stream(self, currenttime):
+        """Generate a random walk (brownian motion). Data is scaled to produce
+        a soft "flickering" effect."""
+        xs, ys, ss, cs = [], [], [], []
+        ##types = {"Bus": 0.2, "Train": 0.4, "Ferry": 0.6, "Cable Car": 0.8}
+        types = {"Inbound": 0.5, "Outbound": 1}
+        '''
+        for trip in self.alltrips:
+          if trip.doesRouteRunOn(self.day):
+            position = trip.whereIsVehicle((datetime.time(currenttime.hour, currenttime.minute, currenttime.second, currenttime.microsecond)), self.day)
+            if position is not None:
+              xs.append(position[0])
+              ys.append(position[1])
+              ss.append(10) # Size
+              ##cs.append(types[trip.modetype]) # Colour
+              cs.append(types[trip.inboundOrOutbound()]) # Colour
+        data = np.array([xs, ys, ss, cs])
+        xy = data[:2, :] # first two rows of data, the location
+        s, c = data[2:, :] # size, color; the last two rows of data
+        '''
+        while True:
+          self.t += 1
+          xs, ys, ss, cs = [], [], [], []
+          currenttime = (datetime.datetime.combine(self.day.datetimeObj, self.starttime) + datetime.timedelta(seconds=self.interval*self.t))
+          ##
+          ## Changes to the arrays actually have to be made here
+          ##
+          for trip in self.alltrips:
+            if trip.doesRouteRunOn(self.day):
+              position = trip.whereIsVehicle((datetime.time(currenttime.hour, currenttime.minute, currenttime.second, currenttime.microsecond)), self.day)
+              if position is not None:
+                xs.append(position[0])
+                ys.append(position[1])
+                ss.append(10) # Size
+                ##cs.append(types[trip.modetype]) # Colour
+                cs.append(types[trip.inboundOrOutbound()]) # Colour
+          data = np.array([xs, ys, ss, cs])
+          xy = data[:2, :] # first two rows of data, the location
+          s, c = data[2:, :] # size, color; the last two rows of data          
+          print currenttime, data[1:2]
+          yield data
+
+    def update(self, i):
+        """Update the scatter plot."""
+        ##currenttime = (datetime.datetime.combine(self.day.datetimeObj, self.starttime) + datetime.timedelta(seconds=self.interval*self.t))
+
+        data = next(self.stream, self.starttime)
+
+        # Set x and y data...
+        self.scat.set_offsets(data[:2, :]) # sets the xy positions, which is the first two rows of data
+        
+        # Set sizes...
+        ##self.scat._sizes = 300 * abs(data[2])**1.5 + 100
+        self.scat._sizes = data[2]
+        # data[2] is the size
+        
+        # Set colors..
+        self.scat.set_array(data[3])
+        # data[3] are the colours
+        
+        ## We have done one more frame, so advance t
+        ##self.t += 1
+
+        # We need to return the updated artist for FuncAnimation to draw..
+        # Note that it expects a sequence of artists, thus the trailing comma.
+        
+        return self.scat,
+
+    def show(self):
+        plt.show()
+
+
     
 ################################################################################
 ########################## Testing Section #####################################
 ################################################################################
-
+'''
 # Testing Objects
 myDatabase = Database(myDB)
 myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 11, 17))
@@ -1017,6 +1155,14 @@ myRoute = Route(myDB, route_id="WBAO023O")
 myMode = Mode(myDB, "Bus")
 myAgency = Agency(myDB, "RAIL")
 myStop = Stop(myDB, 10619) # Petone Station Stop B (A = 22118; Train station (PETO) = 11709; Petone Wharf = 22940)
+'''
+
+myDatabase = Database(myDB)
+myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 11, 22))
+if __name__ == '__main__':
+    a = AnimatedScatter(myDatabase, myDay)
+    a.show()
+
 
 '''
 # Examples of each object, and a sample method.
@@ -1063,8 +1209,9 @@ print "finished"
 
 ##print myPTTrip.whereIsVehicle(datetime.time(7, 26, 12, 543), myDay)
 
-globali = 0
-myDatabase.animateSystem(myDay)
+#myDatabase.animateSystem(myDay)
+
+#AnimatedScatter(myDatabase)
 
 
 ################################################################################
