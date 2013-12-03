@@ -47,6 +47,7 @@
 #                           > countTripsInDay(DayObj)         ::Returns an Integer count of the trips that run on the route on <DayObj> (a la Route.getTripsInDay())::
 #                           > doesRouteRunOn(DayObj)          ::Returns a Boolean according to whether the Route has a trip on <DayObj>::
 #                           > inboundOrOutbound()             ::Returns Strings "Incoming" or "Outgoing" according to whether the Route is such::
+#                           > getMode()                       ::Returns the mode of the route, as a Mode object::
 
 #                         PTTrip(Route)                       ::A PTTrip is a discrete trip made by single mode along a single route::
 #                           > __init__(database, trip_id)     ::<database> is a Database object. <trip_id> is an Integer identifying the trip uniquely. See the database::
@@ -58,6 +59,8 @@
 #                           > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
 #                           > animateTrip()                   :Needs improvement:Uses maptplotlib.animate and self.getShapelyLine() to animate the drawing of a trip's route. Does not account for stops (yet?)::
 #                           > whereIsVehicle(second, DayObj)  ::Returns a tuple (x, y) or (lon, lat) of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object::
+#                           > intervalByIntervalPosition(DayObj, interval=1) ::::
+
 #                         Stop(Object)                        ::A place where PT vehicles stop within a route::
 #                           > __init__(database, stop_id)     ::<database> is a Database object. <stop_id> is an Integer identifying the trip uniquely, able to link it to stop_times. See the database::
 #                           > getStopCode()                   ::Returns the stop_code, a short(er) integer version similar to stop_id, but published on signs and used in passenger text alerts::
@@ -105,6 +108,18 @@ Before using script change filepath for database (db_pathstr) and potentially na
 ################################################################################
 ############################## Program #########################################
 ################################################################################
+
+import time
+def dur( op=None, clock=[time.time()] ):
+    '''
+    Little timing function to test efficiency.
+    Source: http://code.activestate.com/recipes/578776-a-simple-timing-function/
+    '''
+    if op != None:
+        duration = time.time() - clock[0]
+        print '%s finished. Duration %.6f seconds.' % (op, duration)
+    clock[0] = time.time()
+
 from string import Template
 import datetime
 
@@ -657,6 +672,15 @@ class Route(Agency):
     query = q.substitute(route_id = self.route_id)
     self.cur.execute(query)
     return self.cur.fetchall()[0][0]
+  
+  def getMode(self):
+    '''
+    Returns a Mode object representing the mode of transport for the route.
+    '''
+    q = Template('SELECT route_type_desc FROM routes WHERE route_id = "$route_id"')
+    query = q.substitute(route_id = self.route_id)
+    self.cur.execute(query)
+    return Mode(self.database, self.cur.fetchall()[0][0])
     
 class PTTrip(Route):
   '''
@@ -704,28 +728,27 @@ class PTTrip(Route):
     q = Template('SELECT DISTINCT shape_id FROM trips WHERE trip_id = "$trip_id"')
     query = q.substitute(trip_id = self.trip_id)
     self.cur.execute(query)
-    return self.cur.fetchall()[0][0]
+    shape_id = self.cur.fetchall()[0][0]
+    try:
+      shape_id = shape_id.replace('\n','') # Metlink includes line breaks
+    except:
+      shape_id = shape_id
+  
+    try:
+      shape_id = shape_id.replace('\r','') # Metlink includes line breaks
+    except:
+      shape_id = shape_id
+  
+    shape_id.strip(" ")
+    
+    return shape_id
   
   def getShapelyLine(self):
     '''
     Returns a Shapely Line object representing the trip.
     '''
-    try:
-      shape_id = self.getShapeID().replace('\n','') # Metlink includes line breaks
-    except:
-      shape_id = self.getShapeID()
-    
-    try:
-      shape_id = shape_id.replace('\r','') # Metlink includes line breaks
-    except:
-      shape_id = shape_id
-    
-    while shape_id[-1:] == " " or shape_id[-1:] == '\n' or shape_id[-1:] == '\r':
-      # Still some issue with trailing spaces
-      shape_id = shape_id[:-1]
-      
     q = Template('SELECT shape_pt_lon, shape_pt_lat FROM shapes WHERE shape_id = "$shape_id" ORDER BY shape_pt_sequence')
-    query = q.substitute(shape_id = shape_id)
+    query = q.substitute(shape_id = self.getShapeID())
     self.cur.execute(query)
     
     vertices = []
@@ -871,6 +894,69 @@ class PTTrip(Route):
       # If ValueError, the time is beyond 24:00:000...
       # Address this later.
       return None
+    
+  def intervalByIntervalPosition(self, DayObj, interval=1):
+    '''
+    Returns a dictionary of a few values:
+    { "TripID": String
+      "Position": List of the form: [[SecondsPastMidnight, Position], [SecondsPastMidnight+<interval>, Position],
+                  where Position is itself a Tuple: (lon, lat).
+      "Modetype": String
+      "Operator": String
+      "RouteID": String
+      "ShapeID": String
+    }
+    
+    Position is a list of XY tuples indicating the position of a vehicle at each <interval> along its schedule timetable.
+    
+    <interval> is a value in seconds.
+    
+    **To do:**
+    Also add the parameters: "pickingup" and "droppingoff" which are Boolean and indicate whether the vehicle is picking or
+    dropping off passengers at the moment in time (determine from the attributes of the stops it is between at a moment.
+    
+    Not sure what happens when asked to extend past midnight...
+    '''
+    if self.doesRouteRunOn(DayObj) == True:
+      # Infer the time range of the trip
+      stops = self.getStopsInSequence()
+      start_time, end_time = stops[0], stops[-1]
+      start_time, end_time = start_time.getStopTime(self), end_time.getStopTime(self)
+      start_time, end_time = start_time["arrival_time"], end_time["arrival_time"]
+      # Convert the start_time and end_time strings into seconds to add to DayObj
+      begin_seconds_past_midnight = int(start_time[0:2])*60*60 + int(start_time[3:5])*60 + int(start_time[6:8])
+      end_seconds_past_midnight = int(end_time[0:2])*60*60 + int(end_time[3:5])*60 + int(end_time[6:8])
+      
+      # For each <interval> in the trip's duration, add the position of the trip as a (X,Y,) tuple, to a list
+      positions = []
+      for second in range(begin_seconds_past_midnight, end_seconds_past_midnight+1, interval):
+        elapsed = datetime.timedelta(seconds=second)                      # e.g. 24500 seconds
+        current_time = (datetime.datetime.min + elapsed).time()           # e.g. 24500 seconds would become
+                                                                          # datetime.time(6, 48, 20)=06:48:20.000
+                                                                          
+        positions.append([second, self.whereIsVehicle(current_time, DayObj)]) # Seconds past midnight, followed by position
+        
+      
+      ## Return this list, done!
+      ##return positions # List of lon, lat tuples: [(174.79, -41.34), (174.48, -41.56)]
+      
+      trip_summary = {"TripID": self.trip_id,
+                      "Position": positions,
+                      "Modetype": self.getRoute().getMode().modetype,
+                      "Operator": self.getAgencyID(),
+                      "RouteID": self.getRouteID(),
+                      "ShapeID": self.getShapeID()}
+      
+      return trip_summary
+
+    else:
+      # The trip does not operate on DayObj, so forget about it.
+      return None
+    
+    '''
+    Returns a dictionary of {"stop_sequence":integer, "arrival_time":string, "departure_time":string, "pickup_type_text":string, "drop_off_type_text":string, "shape_dist_traveled":float} at the Stop for a given Trip
+    Strings are used for arrival_time and departure_time where datetime.time objects would be preferred, because these times can exceed 23:59:59.999999, and so cause a value error if instantiated.
+    '''    
       
   def animateTrip(self, save=False):
     '''
@@ -1156,13 +1242,13 @@ myMode = Mode(myDB, "Bus")
 myAgency = Agency(myDB, "RAIL")
 myStop = Stop(myDB, 10619) # Petone Station Stop B (A = 22118; Train station (PETO) = 11709; Petone Wharf = 22940)
 '''
-
+'''
 myDatabase = Database(myDB)
 myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 11, 22))
 if __name__ == '__main__':
     a = AnimatedScatter(myDatabase, myDay)
     a.show()
-
+'''
 
 '''
 # Examples of each object, and a sample method.
@@ -1202,6 +1288,7 @@ myDay.plotModeSplit_NVD3(myDatabase, "Greater Wellington")
 print "finished"
 '''
 
+'''
 # Animate with matplotlib
 ##myPTTrip.animateTrip()
 
@@ -1212,7 +1299,36 @@ print "finished"
 #myDatabase.animateSystem(myDay)
 
 #AnimatedScatter(myDatabase)
+'''
 
+## Testing PTTrip.SecondBySecondPosition
+
+
+myDatabase = Database(myDB)
+myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 3))
+myPTTrip = PTTrip(myDB, trip_id=1049) # 4650=A 130 bus # 6434=A HVL train
+print myPTTrip.doesRouteRunOn(myDay)
+
+dur()
+summary = myPTTrip.intervalByIntervalPosition(myDay, interval=10)
+dur('myPTTrip.intervalByIntervalPosition(myDay, interval=10)')
+
+pos = summary["Position"]
+x, y = [], []
+for position in pos:
+    #(56,78)
+    x.append(position[1][0])
+    y.append(position[1][1])
+import numpy as np
+data = np.array([x,y])
+import matplotlib.pyplot as plt
+fig = plt.figure()
+ax = fig.add_subplot(111)
+ax.set_aspect('equal')
+ax.imshow(data)
+fig.savefig('sampleC.png')
+
+myPTTrip.plotShapelyLine()
 
 ################################################################################
 ################################ End ###########################################
