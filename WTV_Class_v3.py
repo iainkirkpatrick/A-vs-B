@@ -111,14 +111,14 @@ Before using script change filepath for database (db_pathstr) and potentially na
 
 import time
 def dur( op=None, clock=[time.time()] ):
-    '''
-    Little timing function to test efficiency.
-    Source: http://code.activestate.com/recipes/578776-a-simple-timing-function/
-    '''
-    if op != None:
-        duration = time.time() - clock[0]
-        print '%s finished. Duration %.6f seconds.' % (op, duration)
-    clock[0] = time.time()
+  '''
+  Little timing function to test efficiency.
+  Source: http://code.activestate.com/recipes/578776-a-simple-timing-function/
+  '''
+  if op != None:
+    duration = time.time() - clock[0]
+    print '%s finished. Duration %.6f seconds.' % (op, duration)
+  clock[0] = time.time()
 
 from string import Template
 import datetime
@@ -131,7 +131,7 @@ from shapely.geometry import Point, LineString
 
 import sqlite3 as dbapi
 #db_str = "GTFSSQL_Wellington_20131112_144855.db" # Name of database
-db_str = "GTFSSQL_Wellington_20131122_220438__SUBSET__.db"
+db_str = "GTFSSQL_Wellington_20131207_212134__SUBSET__.db"
 #db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB, change to necessary filepath
 db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB, change to necessary filepath
 myDB = dbapi.connect(db_pathstr) # Connect to DB
@@ -149,7 +149,21 @@ class Database(object):
     '''
     self.database = database
     self.cur = self.database.cursor()
-  
+
+  def checkTableEmpty(self, tableName="intervals"):
+    '''
+    Checks if tableName has any records.
+    Returns True if it does, False if not.
+    '''
+    q = Template('SELECT exists(SELECT 1 FROM $tableName LIMIT 1)')
+    query = q.substitute(tableName = tableName)
+    results = self.cur.execute(query)
+    for result in results:
+      if result[0] == 0:
+        return False
+      else:
+        return True    
+
   def getFeedInfo(self):
     '''
     Returns all of the information from the feed_info table of the database, which reports on the idenitity of the feed uploader (usu. also the network coordinator).
@@ -159,7 +173,7 @@ class Database(object):
     '''
     self.cur.execute('SELECT * FROM feed_info')
     return self.cur.fetchall()
-  
+
   def feedEndDate(self):
     '''
     Returns a datetime object representing the end date of the GTFS feed, after which time the scheduled services in the GTFS and database are only indications.
@@ -167,7 +181,7 @@ class Database(object):
     FI = self.getFeedInfo()
     end = FI[0][4]
     return datetime.datetime(int(end[0:4]), int(end[5:7]), int(end[8:10]), 23, 59, 59)
-  
+
   def feedStartDate(self):
     '''
     Returns a datetime obect representing the start date of the GTFS feed (database), before which there is no data.
@@ -175,7 +189,7 @@ class Database(object):
     FI = self.getFeedInfo()
     start = FI[0][3]
     return datetime.datetime(int(start[0:4]), int(start[5:7]), int(start[8:10]), 0, 0, 0)
-  
+
   def feedDateRange(self):
     '''
     Returns a tuple of two datetime objects, representing [0] the start date of the feed and [1] the end date of the feed.
@@ -184,7 +198,7 @@ class Database(object):
     start = FI[0][3]
     end = FI[0][4]
     return(datetime.datetime(int(start[0:4]), int(start[5:7]), int(start[8:10]), 0, 0, 0), datetime.datetime(int(end[0:4]), int(end[5:7]), int(end[8:10]), 23, 59, 59))
-  
+
   def getAllModes(self):
     '''
     Returns a list of Mode objects, one for each type of route_type_desc in the GTFS (routes table).
@@ -195,7 +209,7 @@ class Database(object):
     for mode in modes:
       modelist.append(Mode(self.database, mode[0]))
     return modelist
-  
+
   def getAgencies(self):
     '''
     Returns all of the information from the feed_info table of the database, which reports on the idenitity of the feed uploader (usu. also the network coordinator).
@@ -205,13 +219,13 @@ class Database(object):
     '''
     self.cur.execute('SELECT * FROM agency')
     return self.cur.fetchall()
-  
+
   def getAllTrips(self, dayObj):
     '''
     Given a particular <DayObj>, returns a list of PTTrip objects that run on that day.
     '''
     self.cur.execute('SELECT DISTINCT trip_id FROM trips')
-    
+
     trips = []
     for trip in self.cur.fetchall():
       pttrip = PTTrip(self.database, trip[0])
@@ -235,7 +249,7 @@ class Database(object):
       ssecs = "00" + ssecs
     if len(ssecs) == 2:
       ssecs = "0" + ssecs
-      
+
     sittingstops = []
     q = Template('SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text FROM stop_times AS ST JOIN stops AS S ON ST. stop_id = S.stop_id WHERE arrival_time = "$second" OR departure_time = "$second" OR (arrival_time  < "$second" AND departure_time > "$second")')
     query = q.substitute(second = hour + ":" + mins + ":" + secs + "." + ssecs)
@@ -245,15 +259,15 @@ class Database(object):
         sittingstop = {"stop_lat":sittingstop[0], "stop_lon":sittingstop[1], "trip_id":sittingstop[2], "stop_id":sittingstop[3], "pickup_type_text":sittingstop[4], "drop_off_type_text":sittingstop[5]}
         sittingstops.append(sittingstop)
     return sittingstops
-  
+
   def animateSystem(self, DayObj, starttime=datetime.time(8), endtime=datetime.time(8, 1), interval=60):
     '''
     Displays (and can save) a video of the entire PT system, at intervals of <interval> (in seconds).
     Use interval=1 for best results, as scheduled stops are recorded to the nearest second.
     By default, visualises the system between 8am and 9am.
-    
+
     Uses matplotlib, matplotlib.basemap, and matplotlib.animate.
-    
+
     ATM: IT'S FUCKED
     '''
     alltrips = self.getAllTrips(DayObj)
@@ -274,13 +288,13 @@ class Database(object):
         if bounds[3] > maxy or maxy is None:
           maxy = bounds[3]
       return (minx, miny, maxx, maxy)
-    
+
     import numpy as np
     import matplotlib.pyplot as plt
-    
+
     fig, ax = plt.subplots()
     ax.set_aspect('equal')
-    
+
     stopx, stopy, vehiclex, vehicley = [], [], [], []
 
     # range = seconds between start and endtimes
@@ -288,25 +302,25 @@ class Database(object):
       if t == 0:
         points, = ax.plot(stopx, stopy, marker='.', linestyle='None')
         points2, = ax.plot(vehiclex, vehicley, marker='o', color='r', linestyle='None')
-        
+
         ## (minx, miny, maxx, maxy)
         ##bounds = xylims()
         ##bounds = (174.7212282, -41.34865225, 175.6846043, -38.84426454)
         bounds = (174.7212282, -41.34865225, 175, -41.0)
         ax.set_xlim(bounds[0], bounds[2])
         ax.set_ylim(bounds[1], bounds[3])
-        
+
       else:
         currenttime = (datetime.datetime.combine(DayObj.datetimeObj, starttime) + datetime.timedelta(seconds=interval*(t-1)))
         #currentTime = starttime + datetime.timedelta(seconds=interval)
         # while starttime < endtime
-        
+
         for stop in self.getSittingStops(datetime.time(currenttime.hour, currenttime.minute, currenttime.second, currenttime.microsecond), DayObj):
           stopx.append(stop['stop_lon'])
           stopy.append(stop['stop_lat'])
         new_x = np.array(stopx)
         new_y = np.array(stopy)
-        
+
         i = 0
         for trip in alltrips:
           if i > 10:
@@ -319,15 +333,15 @@ class Database(object):
               i += 1
         new_vehiclex = np.array(vehiclex)
         new_vehicley = np.array(vehicley)
-        
+
         points.set_data(new_x, new_y)
         points2.set_data(new_vehiclex, new_vehicley)
-        
+
         stopx, stopy, vehiclex, vehicley = [], [], [], []
-        
+
         print currenttime, t, points
       plt.pause(0.01)
-      
+
 class Day(Database):
   '''
   A date. PT runs by daily schedules, considering things like whether it is a weekday, etc.
@@ -348,11 +362,11 @@ class Day(Database):
     self.dayOfWeekInt = self.datetimeObj.weekday()
     weekdayCorrespondence = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday", 4: "friday", 5: "saturday", 6: "sunday"}
     self.dayOfWeekStr = weekdayCorrespondence[self.dayOfWeekInt] # e.g. "saturday"
-    
+
     # Get the relative "tomorrow" (useful for methods checking if a service is offered on a given day, because it gives the upper limit)
     tomorrowObj = self.datetimeObj + datetime.timedelta(days=1)
     self.tomorrow = tomorrowObj.isoformat(' ') # "2013-11-07 00:00:000"  
-    
+
   def getCanxServices(self):
     '''
     Returns a list of PTService objects representing services that have been cancelled on self.day, as specified by the calendar_dates table.
@@ -360,39 +374,39 @@ class Day(Database):
     q = Template('SELECT DISTINCT service_id FROM calendar_dates WHERE date LIKE "$date%" AND exception_type = 2')
     query = q.substitute(date = self.isoDate[0:10])
     self.cur.execute(query)
-    
+
     canxServices = []
     # Should return PTService objects
     for service in self.cur.fetchall():
       canxServices.append(PTService(self.database, service[0]))
     return canxServices
-  
+
   def getServices(self):
     '''
     Returns a list of PTService objects representing services that are running on self.day.
     Takes into account the day of the week, and the cancelled services on Day.**
-    
+
     **No longer takes into account "cancelled" services, due to the unreliability of this information.
     The code that achieved this has been commented out within the function, rather than removed.
     '''
     # Fill template, including use of today's day of the week.
-    
+
     # Old template, uses CD.date <> "$today2", which seemed to give wrong answer
     ##q = Template('SELECT DISTINCT C.service_id FROM calendar AS C LEFT OUTER JOIN calendar_dates AS CD ON CD.service_id = C.service_id WHERE C.start_Date <= "$today1" AND C.end_date >= "$tomorrow" AND C.$DayOfWeek = 1 AND CD.date <> "$today2"')
     ##query = q.substitute(today1 = self.isoDate[0:10], tomorrow = self.tomorrow[0:10], DayOfWeek = self.dayOfWeekStr, today2 = self.isoDate[0:10])
-    
+
     # New template
     q = Template('SELECT DISTINCT C.service_id FROM calendar AS C LEFT OUTER JOIN calendar_dates AS CD ON CD.service_id = C.service_id WHERE C.start_Date <= "$today1" AND C.end_date >= "$tomorrow" AND C.$DayOfWeek = 1')
     query = q.substitute(today1 = self.isoDate[0:10], tomorrow = self.tomorrow[0:10], DayOfWeek = self.dayOfWeekStr)    
     self.cur.execute(query)
-    
+
     # Data structure to return
     gotServices = []
     services = self.cur.fetchall()
     for service in services:
       gotServices.append(str(service[0]))
     return gotServices
-  
+
   def plotModeSplit_NVD3(self, databaseObj, city):
     '''
     A Day method that uses the Python-nvd3 library to plot a pie chart showing the break-down of vehicle modes (number of services) in Day.
@@ -405,7 +419,7 @@ class Day(Database):
     title2 = "%s, %s, %s.%s.%s" % (city, self.dayOfWeekStr.title(), self.day, self.month, self.year)
     chart = pieChart(name=type, color_category='category20c', height=400, width=400)
     chart.set_containerheader("\n\n<h2>" + title1 + "</h2>\n<h3>" + title2 + "</h3>\n\n\n")
-    
+
     xdata, ydata = [], []
     modeobjs = databaseObj.getAllModes()
     for mode in modeobjs:
@@ -415,12 +429,12 @@ class Day(Database):
     extra_serie = {"tooltip": {"y_start": "", "y_end": " trips"}}
     chart.add_serie(y=ydata, x=xdata, extra=extra_serie)
     chart.buildhtml()
-    
+
     output_file.write(chart.htmlcontent)    
     output_file.close()
     return None
-    
-  
+
+
 class Mode(Database):
   '''
   A class of vehicle that has particular properties it does not share with other vehicles.
@@ -431,7 +445,7 @@ class Mode(Database):
     '''
     Database.__init__(self, database)
     self.modetype = modetype
-    
+
   def getRoutesOfMode(self):
     '''
     Returns a list of Route objects that are of the same mode type as self.
@@ -443,7 +457,7 @@ class Mode(Database):
     for route in self.cur.fetchall():
       routes.append(Route(self.database, route[0]))
     return routes
-  
+
   def getRoutesModeInDay(self, DayObj):
     '''
     Same as Mode.getRoutesModeInDay, but only returns those Route objecys that run on DayObj.
@@ -451,12 +465,12 @@ class Mode(Database):
     '''
     # Get service_id of services that are running on DayObj
     services = DayObj.getServices()
-    
+
     # Distinct route/service pairs of the same modetype as self.Mode.
     q = Template('SELECT DISTINCT T.route_id, T.service_id FROM trips AS T JOIN routes AS R ON T.route_id = R.route_id WHERE R.route_type_desc = "$modetype"')
     query = q.substitute(modetype = self.modetype)
     self.cur.execute(query)
-    
+
     # Append to set if the service runs on DayObj
     RoutesModeInDay = set()
     for tripservice in self.cur.fetchall():
@@ -464,15 +478,15 @@ class Mode(Database):
       service_id = tripservice[1]
       if str(service_id) in services:
         RoutesModeInDay.add(Route(self.database, route_id))
-    
+
     return RoutesModeInDay # Route objects
-  
+
   def countRoutesModeInDay(self, DayObj):
     '''
     Returns an integer representing the count of the returned values from Mode.getRoutesModeInDay(DayObj).
     '''
     return len(self.getRoutesModeInDay(DayObj))
-  
+
   def countTripsModeInDay(self, DayObj):
     '''
     Like countRoutesModeInDay, but counts trips made, not routes.
@@ -483,7 +497,7 @@ class Mode(Database):
     for route in self.getRoutesModeInDay(DayObj):
       count += route.countTripsInDay(DayObj)
     return count
-  
+
   def getAgencies(self):
     '''
     Returns a list of Agency objects representing the agencies that have routes of the same modetype as self.Mode
@@ -491,12 +505,12 @@ class Mode(Database):
     q = Template('SELECT DISTINCT A.agency_id FROM routes AS R JOIN agency AS A ON R.agency_id = A.agency_id WHERE R.route_type_desc = "$modetype"')
     query = q.substitute(modetype = self.modetype)
     self.cur.execute(query)
-    
+
     agencies = []
     for agency in self.cur.fetchall():
       agencies.append(Agency(self.database, agency[0]))
     return agencies
-  
+
 class PTService(Database):
   '''
   Takes a service_id (Integer).
@@ -506,11 +520,11 @@ class PTService(Database):
   '''
   def __init__(self, database, service_id):
     '''
-    
+
     '''
     Database.__init__(self, database)
     self.service_id = service_id
-  
+
   def getRoutes_PTService(self):
     '''
     Returns a list of all of the Route objects based on the route_id or route_ids (plural) that the PTService object represents.
@@ -518,17 +532,17 @@ class PTService(Database):
     q = Template('SELECT DISTINCT route_id FROM trips WHERE service_id = $service_id')
     query = q.substitute(service_id = self.service_id)
     self.cur.execute(query)
-    
+
     routesOfService = []
     for route_id in self.cur.fetchall():
       routesOfService.append(route_id[0])
     return routesOfService
-  
+
 class Agency(Database):
   '''
   An Agency is an opertor usually contracted to run one or more routes with vehicles that they own. They are subject to performance measurements and re-tendering, etc.
   The class has methods that affect the child Route objects.
-  
+
   In the future, Agency will be used to match performance metrics obtained elsewhere, and apply discrete stochastic schedule variations to routes>trips.
   '''
   def __init__(self, database, agency_id):
@@ -551,7 +565,7 @@ class Agency(Database):
     '''
     Database.__init__(self, database)
     self.agency_id = agency_id
-    
+
   def getAgencyName(self):
     '''
     Returns a string of the full Agency name.
@@ -560,7 +574,7 @@ class Agency(Database):
     query = q.substitute(agency_id = self.agency_id)
     self.cur.execute(query)
     return self.cur.fetchall()[0][0]
-  
+
   def getRoutes_Agency(self):
     '''
     Returns a list of the Route objects representing the routes that the Agency is contracted to operate on.
@@ -568,12 +582,12 @@ class Agency(Database):
     q = Template('SELECT DISTINCT route_id FROM routes WHERE agency_id = "$agency_id"')
     query = q.substitute(agency_id = self.agency_id)
     self.cur.execute(query)
-    
+
     routes = []
     for route in self.cur.fetchall():
       routes.append(Route(self.database, route[0]))
     return routes
-  
+
   def getServices(self):
     '''
     Returns a list of the PTService objects representing the services that the agency's routes represent.
@@ -587,12 +601,12 @@ class Agency(Database):
     q = Template('SELECT DISTINCT service_id FROM trips WHERE $routeIDCustom')
     query = q.substitute(routeIDCustom = routeIDCustom)
     self.cur.execute(query)
-    
+
     services = []
     for service in self.cur.fetchall():
       services.append(PTService(self.database, service[0]))
     return services
-    
+
 
 class Route(Agency):
   '''
@@ -600,7 +614,7 @@ class Route(Agency):
   '''
   def __init__(self, database, route_id):
     '''
-    
+
     '''
     Database.__init__(self, database)
     self.route_id = route_id
@@ -614,7 +628,7 @@ class Route(Agency):
     query = q.substitute(route_id = self.route_id)
     self.cur.execute(query)
     return self.cur.fetchall()[0][0]
-  
+
   def getShortName(self):
     '''
     Returns a String of the route_short_name attribute from the routes table representing the name displayed to passengers on bus signage etc. (e.g. "130") for self.Route
@@ -623,7 +637,7 @@ class Route(Agency):
     query = q.substitute(route_id = self.route_id)
     self.cur.execute(query)
     return str(self.cur.fetchall()[0][0])
-  
+
   def getLongName(self):
     '''
     Return a String of the route_long_name attribute from the routes table representing the full name of the route.
@@ -632,14 +646,14 @@ class Route(Agency):
     query = q.substitute(route_id = self.route_id)
     self.cur.execute(query)
     return str(self.cur.fetchall()[0][0])
-  
+
   def getTripsInDay(self, DayObj):
     '''
     Given a Day object, this method returns all of the trips of this route on that Day, as a list of PTTrip objects.
     '''
     q = Template('SELECT DISTINCT T.trip_id FROM routes AS R JOIN trips AS T ON R.route_id = T.route_id JOIN calendar AS C ON T.service_id = C.service_id WHERE R.route_id ="$route_id" AND C.start_Date <= "$today" AND C.end_date >= "$nextday" AND C.$dayText = 1')
     query = q.substitute(route_id = self.route_id, today = DayObj.isoDate[0:10], nextday = DayObj.isoDate[0:10], dayText = DayObj.dayOfWeekStr)
-    
+
     tripsInDay = []
     for trip_id in self.cur.execute(query):
       tripsInDay.append(PTTrip(self.database, trip_id[0]))
@@ -653,7 +667,7 @@ class Route(Agency):
     query = q.substitute(route_id = self.route_id, day = DayObj.isoDate[0:10], nextday = DayObj.tomorrow[0:10], dayText = DayObj.dayOfWeekStr)
     self.cur.execute(query)
     return self.cur.fetchall()[0][0]
-  
+
   def doesRouteRunOn(self, DayObj):
     '''
     Returns a Boolean variable (True or False) according to whether the Route has a trip on <DayObj>.
@@ -662,7 +676,7 @@ class Route(Agency):
       return True
     else:
       return False
-    
+
   def inboundOrOutbound(self):
     '''
     Returns a String informing whether the service is recorded as "Incoming" or "Outgoing".
@@ -672,7 +686,7 @@ class Route(Agency):
     query = q.substitute(route_id = self.route_id)
     self.cur.execute(query)
     return self.cur.fetchall()[0][0]
-  
+
   def getMode(self):
     '''
     Returns a Mode object representing the mode of transport for the route.
@@ -681,7 +695,7 @@ class Route(Agency):
     query = q.substitute(route_id = self.route_id)
     self.cur.execute(query)
     return Mode(self.database, self.cur.fetchall()[0][0])
-    
+
 class PTTrip(Route):
   '''
   A PTTrip is a discrete trip made by a vehicle.
@@ -693,7 +707,7 @@ class PTTrip(Route):
     Database.__init__(self, database)
     self.trip_id = trip_id
     Route.__init__(self, database, self.getRouteID())
-  
+
   def getRouteID(self):
     '''
     Returns the route_id (String) of the trip.
@@ -702,7 +716,7 @@ class PTTrip(Route):
     query = q.substitute(trip_id = self.trip_id)
     self.cur.execute(query)
     return self.cur.fetchall()[0][0]
-  
+
   def getRoute(self):
     '''
     Returns the Route object that represents the path taken along PTtrip.
@@ -719,7 +733,7 @@ class PTTrip(Route):
     self.cur.execute(query)
     PTServiceOfTrip = PTService(self.database, self.cur.fetchall()[0][0])
     return PTServiceOfTrip
-  
+
   def getShapeID(self):
     '''
     Each trip has a particular shape.
@@ -733,16 +747,16 @@ class PTTrip(Route):
       shape_id = shape_id.replace('\n','') # Metlink includes line breaks
     except:
       shape_id = shape_id
-  
+
     try:
       shape_id = shape_id.replace('\r','') # Metlink includes line breaks
     except:
       shape_id = shape_id
-  
+
     shape_id.strip(" ")
-    
+
     return shape_id
-  
+
   def getShapelyLine(self):
     '''
     Returns a Shapely Line object representing the trip.
@@ -750,15 +764,15 @@ class PTTrip(Route):
     q = Template('SELECT shape_pt_lon, shape_pt_lat FROM shapes WHERE shape_id = "$shape_id" ORDER BY shape_pt_sequence')
     query = q.substitute(shape_id = self.getShapeID())
     self.cur.execute(query)
-    
+
     vertices = []
     for vertex in self.cur.fetchall():
       vertices.append(vertex)
-      
+
     line = LineString(vertices)
-    
+
     return line
-  
+
   def plotShapelyLine(self):
     '''
     Uses matplotlib to draw a quick representation of a trip.
@@ -770,7 +784,7 @@ class PTTrip(Route):
     import matplotlib
     matplotlib.rcParams['backend'] = "Qt4Agg"
     from mpl_toolkits.basemap import Basemap
-    
+
     line = self.getShapelyLine()
     bounds = line.bounds
     minx, miny, maxx, maxy = bounds[0]-0.005, bounds[1]-0.005, bounds[2]+0.005, bounds[3]+0.005
@@ -778,20 +792,20 @@ class PTTrip(Route):
     m.drawcoastlines(linewidth=.2)
     m.fillcontinents(color='#CDBC8E',lake_color='#677D6C')
     m.drawmapboundary(fill_color='#677D6C')
-    
+
     lats, lons = [], []
     for vertex in list(line.coords):
       lons.append(vertex[0])
       lats.append(vertex[1])
-    
+
     x,y = m(lons,lats)
-    
+
     m.plot(x,y,c='#BA5F22',alpha=1,zorder=2)
-    
+
     title = self.getRoute().getLongName().strip('"')
     plt.title(title)
     return plt.show()
-    
+
   def getStopsInSequence(self):
     '''
     Returns a list of stop objects that the trip uses, in sequence.
@@ -799,39 +813,39 @@ class PTTrip(Route):
     q = Template('SELECT stop_id FROM stop_times WHERE trip_id = "$trip_id" ORDER BY stop_sequence')
     query = q.substitute(trip_id = self.trip_id)
     self.cur.execute(query)
-    
+
     stops = []
     for stop_time in self.cur.fetchall():
       stops.append(Stop(self.database, stop_time[0]))
     return stops
-  
+
   def whereIsVehicle(self, second, DayObj):
     '''
     Returns an XY position of the vehicle at a given moment in time (<second>) on <dayObj>.
     If the trip does not run, is yet to run, or has already run, it returns None.
     Vehicle locations are "known" at scheduled arrivals, otherwise position is interpolated along their shape.
-    
+
     <second> is a datetime.time object.
-    
+
     Returns a (lon, lat) tuple.
     '''
     try:
       # First, check if the trip even operates on <DayObj>
       if self.doesRouteRunOn(DayObj):
-        
+
         # Get all the stops that the trip visits
         q = Template('SELECT ST.*, S.stop_lat, S.stop_lon FROM stop_times AS ST JOIN stops AS S ON S.stop_id = ST.stop_id WHERE trip_id = $trip_id ORDER BY stop_sequence')
         query = q.substitute(trip_id = self.trip_id)
         self.cur.execute(query)
         stop_times = self.cur.fetchall()
-        
+
         # Check if the trip is even operating at <second>
         overall_start = datetime.time(int(stop_times[0][1][0:2]), int(stop_times[0][1][3:5]), int(stop_times[0][1][6:8]), int(stop_times[0][1][9:12]))
         overall_end = datetime.time(int(stop_times[-1][2][0:2]), int(stop_times[-1][2][3:5]), int(stop_times[-1][2][6:8]), int(stop_times[-1][2][9:12]))
         if second >= overall_start and second <= overall_end:
           # Then the trip is operating at <second>
           # Now, refine the precise position using scheduled times.
-          
+
           i = 0 # index the stop searching so we can query the next stop in the sequence
           for stop in stop_times:
             arrival1 = datetime.time(int(stop[1][0:2]), int(stop[1][3:5]), int(stop[1][6:8]), int(stop[1][9:12]))
@@ -850,52 +864,52 @@ class PTTrip(Route):
               # If the vehicle is after the first stop but has not yet arrived at the second stop,
               # Then the vehicle is between the two stops,
               # And the task is to infer its location based on distance and time.
-              
+
               # How many seconds ahead of the departure from stop 1 is <second>?
               secondsahead = datetime.datetime.combine(myDay.datetimeObj, second) - datetime.datetime.combine(myDay.datetimeObj, departure1)
               secondsahead = float(secondsahead.seconds)
-              
+
               # How many seconds does it take for the vehicle to travel from stop 1 to stop 2?
               timeDelta = datetime.datetime.combine(myDay.datetimeObj, arrival2) - datetime.datetime.combine(myDay.datetimeObj, arrival1) # Computes time difference
               timeDelta = float(timeDelta.seconds) # Returns the value purely in seconds
-              
+
               # Therefore, as a proportion of the travel time between stop 1 and stop 2,
               # how far has the vehicle progressed?
               time_ans = secondsahead / timeDelta
-              
+
               # How far is stop 1 from the beginning of the route?
               stop1Dist = stop[10]
-              
+
               # What is the road distance between stop 1 and stop 2?
               diffDist = stop_times[i+1][10] - stop1Dist
-              
+
               # Therefore, in distance units, how far along the trip is the vehicle?
               dist_ans = stop1Dist + (time_ans * diffDist)
-              
+
               # How long is the trip, in total?
               totaltripdist = float(stop_times[-1][10])
-              
+
               # Finally, what proportion of the route has the vehicle travelled?
               proportionTravelled = dist_ans/totaltripdist
-              
+
               # With that, we can interpolate the vehicle's XY position
               routeShape = self.getShapelyLine()
               interpolatedPosition = routeShape.interpolate(proportionTravelled * self.getShapelyLine().length)
               return (interpolatedPosition.x, interpolatedPosition.y) # lon, lat
-            
+
             i += 1
             # If the vehicle is not at or between 1 or 2, then the for loop proceeds to consider stops 2 and 3, until a 
             # solution is found.
-            
+
       else:
         return None
-      
+
     except ValueError:
       # If ValueError, the time is beyond 24:00:000...
       # Address this later.
       return None
-    
-  def intervalByIntervalPosition(self, DayObj, interval=1):
+
+  def intervalByIntervalPosition(self, DayObj, interval=1, updateDB=True):
     '''
     Returns a dictionary of a few values:
     { "TripID": String
@@ -906,16 +920,18 @@ class PTTrip(Route):
       "RouteID": String
       "ShapeID": String
     }
-    
+
     Position is a list of XY tuples indicating the position of a vehicle at each <interval> along its schedule timetable.
-    
+
     <interval> is a value in seconds.
-    
+
     **To do:**
     Also add the parameters: "pickingup" and "droppingoff" which are Boolean and indicate whether the vehicle is picking or
     dropping off passengers at the moment in time (determine from the attributes of the stops it is between at a moment.
-    
+
     Not sure what happens when asked to extend past midnight...
+    
+    NEW: Writes to the database, rather than returning the values in memory.
     '''
     if self.doesRouteRunOn(DayObj) == True:
       # Infer the time range of the trip
@@ -927,37 +943,75 @@ class PTTrip(Route):
       begin_seconds_past_midnight = int(start_time[0:2])*60*60 + int(start_time[3:5])*60 + int(start_time[6:8])
       end_seconds_past_midnight = int(end_time[0:2])*60*60 + int(end_time[3:5])*60 + int(end_time[6:8])
       
-      # For each <interval> in the trip's duration, add the position of the trip as a (X,Y,) tuple, to a list
-      positions = []
-      for second in range(begin_seconds_past_midnight, end_seconds_past_midnight+1, interval):
-        elapsed = datetime.timedelta(seconds=second)                      # e.g. 24500 seconds
-        current_time = (datetime.datetime.min + elapsed).time()           # e.g. 24500 seconds would become
-                                                                          # datetime.time(6, 48, 20)=06:48:20.000
-                                                                          
-        positions.append([second, self.whereIsVehicle(current_time, DayObj)]) # Seconds past midnight, followed by position
+      # Check if the same shape has already had its position interpolated!
+      # Because if it has, it's only wasting time to re-interpolate the positon over time.
+      q = Template('SELECT EXISTS(SELECT 1 FROM intervals WHERE shape_id = "$shape_id")')
+      shapeID = self.getShapeID()
+      query = q.substitute(shape_id = shapeID)
+      self.cur.execute(query)
+      if self.cur.fetchone():
+        # Then the shape has already been recorded
+        # So now we look at the number of stops, and the start and end time to work out if the two trips are the same
+        # but just start at different times of the day (e.g. an hourly bus).
+        print begin_seconds_past_midnight, end_seconds_past_midnight
+        q = Template('SELECT MIN(date), MAX(date), trip_id FROM intervals WHERE shape_id = "$shape_id" GROUP BY trip_id')
+        query= q.substitute(shape_id = shapeID)
+        self.cur.execute(query)
         
+        DONOTREWRITE, WRITEANEW = False, False # Assume trip has not been recorded, until shown otherwise
+        tripDuration = end_seconds_past_midnight - begin_seconds_past_midnight
+        for rrange in self.cur.fetchall():
+          recordedDuration = rrange[1] - rrange[0]
+          if rrange[2] == self.trip_id:
+            # Found a trip has already been recorded.
+            # Will occur if being run over the same data more than once.
+            # Break
+            DONOTREWRITE = True
+            break
+          elif recordedDuration != tripDuration:
+            # Then the trip is new, but the shape is not (e.g. a slower peak service along existing route).
+            # However, we need to check all existing cases of this shape before this is confirmed,
+            # so there is no break in this branch.
+            WRITEANEW = True
+          elif recordedDuration == tripDuration:
+            # Then the shape has been seen already, going at the same speed.
+            # So we can COPY ITS ROWS.
+            # We need to get each of its rows, and simply replace each of the time past midnights with new ones.
+            # Commit this to the database
+            # Then WRITEANEW = False
+            # Then Break
+            ## some code! TO DO NEXT
+            break
+        
+      if WRITEANEW == True and DONOTREWRITE == False:
+        # The shape has not yet been recorded in intervals
+        # For each <interval> in the trip's duration, add the position of the trip as a (X,Y,) tuple, to a list
+        positions = []
+        for second in range(begin_seconds_past_midnight, end_seconds_past_midnight+1, interval):
+          print second
+          elapsed = datetime.timedelta(seconds=second)                      # e.g. 24500 seconds
+          current_time = (datetime.datetime.min + elapsed).time()           # e.g. 24500 seconds would become
+                                                                            # datetime.time(6, 48, 20)=06:48:20.000
+          positions.append([second, self.whereIsVehicle(current_time, DayObj)]) # Seconds past midnight, followed by position
+        trip_summary = {"TripID": self.trip_id,
+                        "Position": positions,
+                        "Modetype": self.getRoute().getMode().modetype,
+                        "Operator": self.getAgencyID(),
+                        "RouteID": self.getRouteID(),
+                        "ShapeID": self.getShapeID()}
+        
+        if updateDB == True:
+          for position in trip_summary["Position"]:
+            self.cur.execute('INSERT INTO intervals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (trip_summary["TripID"], position[0], position[1][0], position[1][1], trip_summary["Modetype"], None, None, trip_summary["Operator"], trip_summary["RouteID"], trip_summary["ShapeID"]))
+          self.database.commit()
+          
+        return trip_summary
       
-      ## Return this list, done!
-      ##return positions # List of lon, lat tuples: [(174.79, -41.34), (174.48, -41.56)]
-      
-      trip_summary = {"TripID": self.trip_id,
-                      "Position": positions,
-                      "Modetype": self.getRoute().getMode().modetype,
-                      "Operator": self.getAgencyID(),
-                      "RouteID": self.getRouteID(),
-                      "ShapeID": self.getShapeID()}
-      
-      return trip_summary
-
     else:
       # The trip does not operate on DayObj, so forget about it.
+      # Or it has already been written.
       return None
-    
-    '''
-    Returns a dictionary of {"stop_sequence":integer, "arrival_time":string, "departure_time":string, "pickup_type_text":string, "drop_off_type_text":string, "shape_dist_traveled":float} at the Stop for a given Trip
-    Strings are used for arrival_time and departure_time where datetime.time objects would be preferred, because these times can exceed 23:59:59.999999, and so cause a value error if instantiated.
-    '''    
-      
+
   def animateTrip(self, save=False):
     '''
     Uses matplotlib.animate to animate the route a trip takes.
@@ -966,7 +1020,7 @@ class PTTrip(Route):
     import numpy as np
     import matplotlib.pyplot as plt
     import matplotlib.animation as animation
-    
+
     def update_line(num, data, line):
       '''
       Function that makes the animation happen.
@@ -975,15 +1029,15 @@ class PTTrip(Route):
       line.set_data(data[...,num-1:num])
       # [...,:num]=everything, revealed in sequence 
       # [...,num-1:num]=only the most recent segment, nothing else is shown in each frame
-      
+
       time_text.set_text("Frame="+str(num))
-      
+
       # Returns the line object, which is important because this tells the animator
       # which object on the plit to update after each frame.
       # Note that it is returning a tuple of the plot ojects which have been modified
       # (added, in this case), and are therefore animated.
       return line, time_text,
-                   
+
     fig1 = plt.figure() # Create a figure window
     ax = fig1.add_subplot(111, aspect='equal', autoscale_on=True)
     # Text to be updated with the animation
@@ -995,30 +1049,30 @@ class PTTrip(Route):
       x.append(vertex[0])
       y.append(vertex[1])
     data = np.array([x, y])
-    
+
     # A line object that will be modified in the animation
     # It first plots an empty line: data is added later
     l, = plt.plot([], [], 'r.') # Color=r, line style=-
-    
+
     time_text.set_text('')
-    
+
     plt.xlim(min(data[0])-0.01, max(data[0])+0.01)
     plt.ylim(min(data[1]-0.01), max(data[1])+0.01)
     plt.xlabel('longitude')
     plt.ylabel('latitude')
     plt.title('Test: Naenae-Petone 130 Bus Animation')
-    
+
     # The line object needs to persist, so it is assigned to a variable, line_ani
     # interval: N miliseconds delay between frames
     # blit: tells the animation to only re-draw the pieces of the plot that have changed...
-        # which saves a lot of time and makes the animation display much more quickly.
+      # which saves a lot of time and makes the animation display much more quickly.
     line_ani = animation.FuncAnimation(fig1, update_line, len(x), fargs=(data, l),
-        interval=20, blit=False)
+                                       interval=20, blit=False)
     # For some reason blit=True keeps a zero underneath the text...
-    
+
     if save == True:
       line_ani.save('test130bus.mp4')
-    
+
     return plt.show()    
 
 class Stop(Database):
@@ -1031,7 +1085,7 @@ class Stop(Database):
     '''
     Database.__init__(self, database)
     self.stop_id = stop_id
-  
+
   def getStopCode(self):
     '''
     Returns the stop_code, a short(er) integer version similar to stop_id, but published on signs and used in passenger text alerts.
@@ -1040,7 +1094,7 @@ class Stop(Database):
     query = q.substitute(stop_id = self.stop_id)
     self.cur.execute(query)
     return self.cur.fetchall()[0][0]
-  
+
   def getStopName(self):
     '''
     Returns the stop_name, a long name of the stop (String).
@@ -1052,7 +1106,7 @@ class Stop(Database):
       return self.cur.fetchall()[0][0].strip('"') # Removes quotation marks present in Metlink feeds
     except:
       return self.cur.fetchall()[0][0]
-  
+
   def getStopDesc(self):
     '''
     Returns the stop_desc, a short but textual name for the stop.
@@ -1064,7 +1118,7 @@ class Stop(Database):
       return self.cur.fetchall()[0][0].strip('"') # Removes quotation marks present in Metlink feeds
     except:
       return self.cur.fetchall()[0][0]
-    
+
   def getLocationType(self):
     '''
     Returns location_type_desc from the stops table: ["Stop", "Station", "Hail and Ride"]
@@ -1075,7 +1129,7 @@ class Stop(Database):
     self.cur.execute(query)
     self.cur.execute
     return self.cur.fetchall()[0][0]
-    
+
   def getShapelyPoint(self):
     '''
     Returns a shapely Point object representing the location of the stop.
@@ -1087,7 +1141,7 @@ class Stop(Database):
     loc = self.cur.fetchall()[0]
     lat, lon = loc[0], loc[1]
     return Point(lon, lat) # Shapely Point object... try Point.x, Point.y, etc.
-  
+
   def getStopTime(self, TripObj):
     '''
     Returns a dictionary of {"stop_sequence":integer, "arrival_time":string, "departure_time":string, "pickup_type_text":string, "drop_off_type_text":string, "shape_dist_traveled":float} at the Stop for a given Trip
@@ -1099,236 +1153,21 @@ class Stop(Database):
     stop_time = self.cur.fetchall()[0]
     stop_time = {"stop_sequence":int(stop_time[0]), "arrival_time":stop_time[1], "departure_time":stop_time[2], "pickup_type_text":stop_time[3], "drop_off_type_text":stop_time[4], "shape_dist_traveled":float(stop_time[5])}
     return stop_time
-  
-class AnimatedScatter(object):
-    """
-    An animated scatter plot using matplotlib.animations.FuncAnimation.
-    http://stackoverflow.com/questions/9401658/matplotlib-animating-a-scatter-plot
-    """
-    def __init__(self, DatabaseObj, DayObj, starttime=datetime.time(13), interval=30*60):
-        self.stream = self.data_stream(currenttime=starttime)
-        self.db = DatabaseObj
-        self.day = DayObj
-        self.starttime = starttime
-        self.interval = interval
-        self.t = 0 # How many intervals have been animated?
-        self.bounding = True # Let it determine the bounds for itself (expensive)
-        
-        self.alltrips = self.db.getAllTrips(self.day)
 
-        # Setup the figure and axes...
-        self.fig, self.ax = plt.subplots()
-        
-        # Then setup FuncAnimation.
-        self.ani = animation.FuncAnimation(self.fig, self.update, frames=10, interval=0.1, 
-                                           init_func=self.setup_plot, blit=True)
-        anim = self.ani
-        
-    def setup_plot(self):
-        """Initial drawing of the scatter plot."""
-        x, y, s, c = next(self.stream, self.starttime)
-        self.scat = self.ax.scatter(x, y, c=c, s=s, animated=True)
-        
-        minx, maxx, miny, maxy = None, None, None, None
-        if self.bounding == False:
-          for trip in self.alltrips:
-            boundbox = trip.getShapelyLine().bounds # (minx, miny, maxx, maxy)
-            if boundbox[0] < minx or minx is None:
-              minx = boundbox[0]
-            if boundbox[1] < miny or miny is None:
-              miny = boundbox[1]
-            if boundbox[2] > maxx or maxx is None:
-              maxx = boundbox[2]
-            if boundbox[3] > maxy or maxy is None:
-              maxy = boundbox[3]
-          self.ax.axis([minx, maxx, miny, maxy])
-          self.bounding = True
-        else:
-          minx, miny, maxx, maxy = 174.7212282, -41.34865225, 175, -41.0
-          self.ax.axis([minx, maxx, miny, maxy])
-        
-        self.ax.set_aspect = 'equal'
-
-        # For FuncAnimation's sake, we need to return the artist we'll be using
-        # Note that it expects a sequence of artists, thus the trailing comma.
-        return self.scat,
-
-    def data_stream(self, currenttime):
-        """Generate a random walk (brownian motion). Data is scaled to produce
-        a soft "flickering" effect."""
-        xs, ys, ss, cs = [], [], [], []
-        ##types = {"Bus": 0.2, "Train": 0.4, "Ferry": 0.6, "Cable Car": 0.8}
-        types = {"Inbound": 0.5, "Outbound": 1}
-        '''
-        for trip in self.alltrips:
-          if trip.doesRouteRunOn(self.day):
-            position = trip.whereIsVehicle((datetime.time(currenttime.hour, currenttime.minute, currenttime.second, currenttime.microsecond)), self.day)
-            if position is not None:
-              xs.append(position[0])
-              ys.append(position[1])
-              ss.append(10) # Size
-              ##cs.append(types[trip.modetype]) # Colour
-              cs.append(types[trip.inboundOrOutbound()]) # Colour
-        data = np.array([xs, ys, ss, cs])
-        xy = data[:2, :] # first two rows of data, the location
-        s, c = data[2:, :] # size, color; the last two rows of data
-        '''
-        while True:
-          self.t += 1
-          xs, ys, ss, cs = [], [], [], []
-          currenttime = (datetime.datetime.combine(self.day.datetimeObj, self.starttime) + datetime.timedelta(seconds=self.interval*self.t))
-          ##
-          ## Changes to the arrays actually have to be made here
-          ##
-          for trip in self.alltrips:
-            if trip.doesRouteRunOn(self.day):
-              position = trip.whereIsVehicle((datetime.time(currenttime.hour, currenttime.minute, currenttime.second, currenttime.microsecond)), self.day)
-              if position is not None:
-                xs.append(position[0])
-                ys.append(position[1])
-                ss.append(10) # Size
-                ##cs.append(types[trip.modetype]) # Colour
-                cs.append(types[trip.inboundOrOutbound()]) # Colour
-          data = np.array([xs, ys, ss, cs])
-          xy = data[:2, :] # first two rows of data, the location
-          s, c = data[2:, :] # size, color; the last two rows of data          
-          print currenttime, data[1:2]
-          yield data
-
-    def update(self, i):
-        """Update the scatter plot."""
-        ##currenttime = (datetime.datetime.combine(self.day.datetimeObj, self.starttime) + datetime.timedelta(seconds=self.interval*self.t))
-
-        data = next(self.stream, self.starttime)
-
-        # Set x and y data...
-        self.scat.set_offsets(data[:2, :]) # sets the xy positions, which is the first two rows of data
-        
-        # Set sizes...
-        ##self.scat._sizes = 300 * abs(data[2])**1.5 + 100
-        self.scat._sizes = data[2]
-        # data[2] is the size
-        
-        # Set colors..
-        self.scat.set_array(data[3])
-        # data[3] are the colours
-        
-        ## We have done one more frame, so advance t
-        ##self.t += 1
-
-        # We need to return the updated artist for FuncAnimation to draw..
-        # Note that it expects a sequence of artists, thus the trailing comma.
-        
-        return self.scat,
-
-    def show(self):
-        plt.show()
-
-
-    
 ################################################################################
 ########################## Testing Section #####################################
 ################################################################################
-'''
-# Testing Objects
-myDatabase = Database(myDB)
-myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 11, 17))
-myPTService = PTService(myDB, service_id=1)
-myPTTrip = PTTrip(myDB, trip_id=4650) # 4650=A 130 bus # 6434=A HVL train
-##myRoute = Route(myDB, route_id="WBBO047O") # Not working correctly, because this service only runs during trimester times.
-##myRoute = Route(myDB, route_id="WBBO300O") # Not working correctly, because this service only runs on the last Sunday of each month, but this says it runs once each Sunday.
-myRoute = Route(myDB, route_id="WBAO023O")
-myMode = Mode(myDB, "Bus")
-myAgency = Agency(myDB, "RAIL")
-myStop = Stop(myDB, 10619) # Petone Station Stop B (A = 22118; Train station (PETO) = 11709; Petone Wharf = 22940)
-'''
-'''
-myDatabase = Database(myDB)
-myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 11, 22))
-if __name__ == '__main__':
-    a = AnimatedScatter(myDatabase, myDay)
-    a.show()
-'''
-
-'''
-# Examples of each object, and a sample method.
-print "myDay: cancelled services: ", myDay.getCanxServices()
-print "myPTService: routes: ", myPTService.getRoutes_PTService()
-print "myPTTrip: Agency name: ", myPTTrip.getAgencyName()
-print "myDatabase: Agencies: ", myDatabase.getAgencies()
-print "myRoute: Trips in myDay: ", myRoute.getTripsInDay(myDay)
-print "myRoute: Count of Trips in myDay: ", myRoute.countTripsInDay(myDay)
-print "myRoute: Agency ID: ", myRoute.getAgencyID()
-print "myMode: count of the trips of this mode in myDay: ", myMode.countTripsModeInDay(myDay)
-print "myAgency: Agency name: ", myAgency.getAgencyName()
-for route in myAgency.getRoutes_Agency():
-  print myAgency.getAgencyName() + " runs " + route.getShortName() + " " + route.inboundOrOutbound() + " (" + str(route.countTripsInDay(myDay)) + " trips on myDay) " + route.getLongName()
-print "myMode: Agency objects with the same mode: ", myMode.getAgencies()
-print "myAgency: Service objects that the Agency participates  in: ", myAgency.getServices()
-print "myStop: stop_id, stop_code: ", myStop.stop_id, myStop.getStopCode(), myStop.getStopName(), myStop.getStopDesc(), myStop.getLocationType(), myStop.getShapelyPoint().wkt
-print len(myPTTrip.getShapelyLine().coords)
-
-myPTTrip.plotShapelyLine()
-for i in myPTTrip.getStopsInSequence():
-  print i.getStopTime(myPTTrip)["arrival_time"], i.getStopName()
-  
-
-# For each day in November 2013, reports how many routes are in operation, broken down by mode.
-for i in range(1, 30):
-  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 11, i))
-  for mode in myDatabase.getAllModes():
-    if mode.modetype == "Cable Car":
-      print "%s\t%s\t%s" % (mode.modetype, myDay.dayOfWeekStr.title(), mode.countRoutesModeInDay(myDay))
-    else:
-      print "%s\t\t%s\t%s" % (mode.modetype, myDay.dayOfWeekStr.title(), mode.countRoutesModeInDay(myDay))
-  print ""
-'''
-'''
-myDay.plotModeSplit_NVD3(myDatabase, "Greater Wellington")
-print "finished"
-'''
-
-'''
-# Animate with matplotlib
-##myPTTrip.animateTrip()
-
-##print myDatabase.getSittingStops(datetime.time(8, 59, 0, 0), myDay)
-
-##print myPTTrip.whereIsVehicle(datetime.time(7, 26, 12, 543), myDay)
-
-#myDatabase.animateSystem(myDay)
-
-#AnimatedScatter(myDatabase)
-'''
 
 ## Testing PTTrip.SecondBySecondPosition
-
-
 myDatabase = Database(myDB)
+print myDatabase.checkTableEmpty()
 myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 3))
-myPTTrip = PTTrip(myDB, trip_id=1049) # 4650=A 130 bus # 6434=A HVL train
+myPTTrip = PTTrip(myDB, trip_id=601) # 4650=A 130 bus # 6434=A HVL train
 print myPTTrip.doesRouteRunOn(myDay)
 
 dur()
-summary = myPTTrip.intervalByIntervalPosition(myDay, interval=10)
-dur('myPTTrip.intervalByIntervalPosition(myDay, interval=10)')
-
-pos = summary["Position"]
-x, y = [], []
-for position in pos:
-    #(56,78)
-    x.append(position[1][0])
-    y.append(position[1][1])
-import numpy as np
-data = np.array([x,y])
-import matplotlib.pyplot as plt
-fig = plt.figure()
-ax = fig.add_subplot(111)
-ax.set_aspect('equal')
-ax.imshow(data)
-fig.savefig('sampleC.png')
-
-myPTTrip.plotShapelyLine()
+summary = myPTTrip.intervalByIntervalPosition(myDay, interval=90)
+dur('myPTTrip.intervalByIntervalPosition(myDay, interval=90)')
 
 ################################################################################
 ################################ End ###########################################
