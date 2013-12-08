@@ -51,7 +51,8 @@
 
 #                         PTTrip(Route)                       ::A PTTrip is a discrete trip made by single mode along a single route::
 #                           > __init__(database, trip_id)     ::<database> is a Database object. <trip_id> is an Integer identifying the trip uniquely. See the database::
-#                           > getRouteID()                    ::Returns the route_id (String) of the route that the trip follows. Used to construct the Route object which the Trip object inherits.
+#                           > getRouteID()                    ::Returns the route_id (String) of the route that the trip follows. Used to construct the Route object which the Trip object inherits::
+#                           > doesTripRunOn(self, DayObj)     ::Returns a Boolean reporting whether the PTTtrip runs on <DayObj> or not. Considers the exceptions in calendar_dates before deciding::
 #                           > getRoute()                      ::Returns the Route object representing the route taken on Trip::
 #                           > getService()                    ::Returns the PTService object that includes this trip::
 #                           > getShapelyLine()                ::Returns a Shapely Line object representing the shape of the trip::
@@ -59,7 +60,7 @@
 #                           > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
 #                           > animateTrip()                   :Needs improvement:Uses maptplotlib.animate and self.getShapelyLine() to animate the drawing of a trip's route. Does not account for stops (yet?)::
 #                           > whereIsVehicle(second, DayObj)  ::Returns a tuple (x, y) or (lon, lat) of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object::
-#                           > intervalByIntervalPosition(DayObj, interval=1) ::::
+#                           > intervalByIntervalPosition(DayObj, interval=1) ::WRITES TO THE DATABASE about the positions of every vehicle on <DayObj> at the temporal resolution of <interval>. Does not write duplicates. Make sure to only pass it PTTrips that doesTripRunOn(DayObj) == True::
 
 #                         Stop(Object)                        ::A place where PT vehicles stop within a route::
 #                           > __init__(database, stop_id)     ::<database> is a Database object. <stop_id> is an Integer identifying the trip uniquely, able to link it to stop_times. See the database::
@@ -130,8 +131,8 @@ import numpy as np
 from shapely.geometry import Point, LineString
 
 import sqlite3 as dbapi
-#db_str = "GTFSSQL_Wellington_20131112_144855.db" # Name of database
-db_str = "GTFSSQL_Wellington_20131207_212134__SUBSET__.db"
+db_str = "GTFSSQL_Wellington_20131208_215725.db" # Name of database
+##db_str = "GTFSSQL_Wellington_20131207_212134__SUBSET__.db"
 #db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB, change to necessary filepath
 db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB, change to necessary filepath
 myDB = dbapi.connect(db_pathstr) # Connect to DB
@@ -160,9 +161,9 @@ class Database(object):
     results = self.cur.execute(query)
     for result in results:
       if result[0] == 0:
-        return False
+        return True
       else:
-        return True    
+        return False
 
   def getFeedInfo(self):
     '''
@@ -220,7 +221,7 @@ class Database(object):
     self.cur.execute('SELECT * FROM agency')
     return self.cur.fetchall()
 
-  def getAllTrips(self, dayObj):
+  def getAllTrips(self, DayObj):
     '''
     Given a particular <DayObj>, returns a list of PTTrip objects that run on that day.
     '''
@@ -229,7 +230,7 @@ class Database(object):
     trips = []
     for trip in self.cur.fetchall():
       pttrip = PTTrip(self.database, trip[0])
-      if pttrip.doesRouteRunOn:
+      if pttrip.doesTripRunOn(DayObj):
         trips.append(pttrip)
     return trips
   
@@ -716,6 +717,71 @@ class PTTrip(Route):
     query = q.substitute(trip_id = self.trip_id)
     self.cur.execute(query)
     return self.cur.fetchall()[0][0]
+  
+  def doesTripRunOn(self, DayObj):
+    '''
+    Returns a Boolean to determine if the PTTrip runs on <DayObj>
+    <ignore> controls whether to ignore the calendar_dates table of the database
+    that controls additions and exceptions to timetabled trips on particular days.
+    '''
+    q = Template('SELECT * FROM calendar WHERE service_id = "$service_id"')
+    serviceid = self.getService().service_id
+    query = q.substitute(service_id = serviceid)
+    self.cur.execute(query)
+    info = self.cur.fetchone()
+    Week = {"Monday": False, "Tuesday": False, "Wednesday": False, "Thursday": False, "Friday": False, "Saturday": False, "Sunday": False}
+    if info[1] == 1:
+      Week["Monday"] == True
+    if info[2] == 1:
+      Week["Tuesday"] = True
+    if info[3] == 1:
+      Week["Wednesday"] = True
+    if info[4] == 1:
+      Week["Thursday"] = True
+    if info[5] == 1:
+      Week["Friday"] = True
+    if info[6] == 1:
+      Week["Saturday"] = True
+    if info[7] == 1:
+      Week["Sunday"] = True
+    DOW = DayObj.dayOfWeekStr.title()
+    if Week[DOW] is True:
+      # Then the trip does run on this day of the week, but we still need to check if there's an exception
+      # for this particular day
+      # Or, we could ignore exceptions for particular dates and just assume the full system is running
+      # The latter is risky, as it can also ignore additional trips, and include things that run, say, monthly,
+      # not every week.
+      try:
+        q = Template('SELECT * FROM calendar_dates WHERE service_id = "$service_id" and date = "$date"')
+        tripdate = DayObj.isoDate + ".000"
+        query = q.substitute(service_id = serviceid, date = tripdate)
+        self.cur.execute(query)
+        exceptions = self.cur.fetchall()
+        for exception in exceptions:
+          excdate, exctype = exception[1], exception[3]
+          if excdate == tripdate and exctype == 'Removed':
+            # The trip normally runs on this day, but today is an exception
+            return False
+        # Once all relevant exceptions have been checked, it is confirmed that the trip does run on <DayObj>
+        return True
+      except:
+        # There are never any exceptions for this trip
+        return True
+    else:
+      # Even if the trip does not normally run on this day of the week,
+      # there may still be exceptions in the form of ADDITIONS
+      q = Template('SELECT * FROM calendar_dates WHERE service_id = "$service_id" and date = "$date"')
+      tripdate = DayObj.isoDate + ".000"
+      query = q.substitute(service_id = serviceid, date = tripdate)
+      self.cur.execute(query)
+      exceptions = self.cur.fetchall()
+      for exception in exceptions:
+        excdate, exctype = exception[1], exception[3]
+        if excdate == tripdate and exctype == 'Added':
+          return True
+      # Once all relevant exceptions have been checked and no additions have been found,
+      # we have confirmed that the trip does not run on <DayObj>
+      return False
 
   def getRoute(self):
     '''
@@ -830,76 +896,73 @@ class PTTrip(Route):
     Returns a (lon, lat) tuple.
     '''
     try:
-      # First, check if the trip even operates on <DayObj>
-      if self.doesRouteRunOn(DayObj):
+      # Get all the stops that the trip visits
+      q = Template('SELECT ST.*, S.stop_lat, S.stop_lon FROM stop_times AS ST JOIN stops AS S ON S.stop_id = ST.stop_id WHERE trip_id = $trip_id ORDER BY stop_sequence')
+      query = q.substitute(trip_id = self.trip_id)
+      self.cur.execute(query)
+      stop_times = self.cur.fetchall()
 
-        # Get all the stops that the trip visits
-        q = Template('SELECT ST.*, S.stop_lat, S.stop_lon FROM stop_times AS ST JOIN stops AS S ON S.stop_id = ST.stop_id WHERE trip_id = $trip_id ORDER BY stop_sequence')
-        query = q.substitute(trip_id = self.trip_id)
-        self.cur.execute(query)
-        stop_times = self.cur.fetchall()
+      # Check if the trip is even operating at <second>
+      overall_start = datetime.time(int(stop_times[0][1][0:2]), int(stop_times[0][1][3:5]), int(stop_times[0][1][6:8]), int(stop_times[0][1][9:12]))
+      overall_end = datetime.time(int(stop_times[-1][2][0:2]), int(stop_times[-1][2][3:5]), int(stop_times[-1][2][6:8]), int(stop_times[-1][2][9:12]))
+      if second >= overall_start and second <= overall_end:
+        # Then the trip is operating at <second>
+        # Now, refine the precise position using scheduled times.
 
-        # Check if the trip is even operating at <second>
-        overall_start = datetime.time(int(stop_times[0][1][0:2]), int(stop_times[0][1][3:5]), int(stop_times[0][1][6:8]), int(stop_times[0][1][9:12]))
-        overall_end = datetime.time(int(stop_times[-1][2][0:2]), int(stop_times[-1][2][3:5]), int(stop_times[-1][2][6:8]), int(stop_times[-1][2][9:12]))
-        if second >= overall_start and second <= overall_end:
-          # Then the trip is operating at <second>
-          # Now, refine the precise position using scheduled times.
+        i = 0 # index the stop searching so we can query the next stop in the sequence
+        for stop in stop_times:
+          arrival1 = datetime.time(int(stop[1][0:2]), int(stop[1][3:5]), int(stop[1][6:8]), int(stop[1][9:12]))
+          departure1 = datetime.time(int(stop[2][0:2]), int(stop[2][3:5]), int(stop[2][6:8]), int(stop[2][9:12]))
+          if second >= arrival1 and second <= departure1:
+            # If the trip dwells at the stop and second is within the dwell time range,
+            # Return the X, Y of the current stop because we have found the vehicle.
+            return (stop[12], stop[11]) # lon, lat
+          arrival2 = datetime.time(int(stop_times[i+1][1][0:2]), int(stop_times[i+1][1][3:5]), int(stop_times[i+1][1][6:8]), int(stop_times[i+1][1][9:12]))
+          departure2 = datetime.time(int(stop_times[i+1][2][0:2]), int(stop_times[i+1][2][3:5]), int(stop_times[i+1][2][6:8]), int(stop_times[i+1][2][9:12]))
+          if second >= arrival2 and second <= departure2:
+            # If the trip dwells at the next stop and second is within the dweel time range,
+            # Return the X, Y of the next stop because we have found the vehicle.
+            return (stop_times[i+1][12], stop_times[i+1][11]) # lon, lat
+          if second > departure1 and second < arrival2:
+            # If the vehicle is after the first stop but has not yet arrived at the second stop,
+            # Then the vehicle is between the two stops,
+            # And the task is to infer its location based on distance and time.
 
-          i = 0 # index the stop searching so we can query the next stop in the sequence
-          for stop in stop_times:
-            arrival1 = datetime.time(int(stop[1][0:2]), int(stop[1][3:5]), int(stop[1][6:8]), int(stop[1][9:12]))
-            departure1 = datetime.time(int(stop[2][0:2]), int(stop[2][3:5]), int(stop[2][6:8]), int(stop[2][9:12]))
-            if second >= arrival1 and second <= departure1:
-              # If the trip dwells at the stop and second is within the dwell time range,
-              # Return the X, Y of the current stop because we have found the vehicle.
-              return (stop[12], stop[11]) # lon, lat
-            arrival2 = datetime.time(int(stop_times[i+1][1][0:2]), int(stop_times[i+1][1][3:5]), int(stop_times[i+1][1][6:8]), int(stop_times[i+1][1][9:12]))
-            departure2 = datetime.time(int(stop_times[i+1][2][0:2]), int(stop_times[i+1][2][3:5]), int(stop_times[i+1][2][6:8]), int(stop_times[i+1][2][9:12]))
-            if second >= arrival2 and second <= departure2:
-              # If the trip dwells at the next stop and second is within the dweel time range,
-              # Return the X, Y of the next stop because we have found the vehicle.
-              return (stop_times[i+1][12], stop_times[i+1][11]) # lon, lat
-            if second > departure1 and second < arrival2:
-              # If the vehicle is after the first stop but has not yet arrived at the second stop,
-              # Then the vehicle is between the two stops,
-              # And the task is to infer its location based on distance and time.
+            # How many seconds ahead of the departure from stop 1 is <second>?
+            secondsahead = datetime.datetime.combine(myDay.datetimeObj, second) - datetime.datetime.combine(myDay.datetimeObj, departure1)
+            secondsahead = float(secondsahead.seconds)
 
-              # How many seconds ahead of the departure from stop 1 is <second>?
-              secondsahead = datetime.datetime.combine(myDay.datetimeObj, second) - datetime.datetime.combine(myDay.datetimeObj, departure1)
-              secondsahead = float(secondsahead.seconds)
+            # How many seconds does it take for the vehicle to travel from stop 1 to stop 2?
+            timeDelta = datetime.datetime.combine(myDay.datetimeObj, arrival2) - datetime.datetime.combine(myDay.datetimeObj, arrival1) # Computes time difference
+            timeDelta = float(timeDelta.seconds) # Returns the value purely in seconds
 
-              # How many seconds does it take for the vehicle to travel from stop 1 to stop 2?
-              timeDelta = datetime.datetime.combine(myDay.datetimeObj, arrival2) - datetime.datetime.combine(myDay.datetimeObj, arrival1) # Computes time difference
-              timeDelta = float(timeDelta.seconds) # Returns the value purely in seconds
+            # Therefore, as a proportion of the travel time between stop 1 and stop 2,
+            # how far has the vehicle progressed?
+            time_ans = secondsahead / timeDelta
 
-              # Therefore, as a proportion of the travel time between stop 1 and stop 2,
-              # how far has the vehicle progressed?
-              time_ans = secondsahead / timeDelta
+            # How far is stop 1 from the beginning of the route?
+            stop1Dist = stop[10]
 
-              # How far is stop 1 from the beginning of the route?
-              stop1Dist = stop[10]
+            # What is the road distance between stop 1 and stop 2?
+            diffDist = stop_times[i+1][10] - stop1Dist
 
-              # What is the road distance between stop 1 and stop 2?
-              diffDist = stop_times[i+1][10] - stop1Dist
+            # Therefore, in distance units, how far along the trip is the vehicle?
+            dist_ans = stop1Dist + (time_ans * diffDist)
 
-              # Therefore, in distance units, how far along the trip is the vehicle?
-              dist_ans = stop1Dist + (time_ans * diffDist)
+            # How long is the trip, in total?
+            totaltripdist = float(stop_times[-1][10])
 
-              # How long is the trip, in total?
-              totaltripdist = float(stop_times[-1][10])
+            # Finally, what proportion of the route has the vehicle travelled?
+            proportionTravelled = dist_ans/totaltripdist
 
-              # Finally, what proportion of the route has the vehicle travelled?
-              proportionTravelled = dist_ans/totaltripdist
+            # With that, we can interpolate the vehicle's XY position
+            routeShape = self.getShapelyLine()
+            interpolatedPosition = routeShape.interpolate(proportionTravelled * routeShape.length)
+            return (interpolatedPosition.x, interpolatedPosition.y) # lon, lat
 
-              # With that, we can interpolate the vehicle's XY position
-              routeShape = self.getShapelyLine()
-              interpolatedPosition = routeShape.interpolate(proportionTravelled * self.getShapelyLine().length)
-              return (interpolatedPosition.x, interpolatedPosition.y) # lon, lat
-
-            i += 1
-            # If the vehicle is not at or between 1 or 2, then the for loop proceeds to consider stops 2 and 3, until a 
-            # solution is found.
+          i += 1
+          # If the vehicle is not at or between 1 or 2, then the for loop proceeds to consider stops 2 and 3, until a 
+          # solution is found.
 
       else:
         return None
@@ -932,6 +995,7 @@ class PTTrip(Route):
     Not sure what happens when asked to extend past midnight...
     
     NEW: Writes to the database, rather than returning the values in memory.
+    Return only None, but writes to the database if this is appropriate.
     '''
     if self.doesRouteRunOn(DayObj) == True:
       # Infer the time range of the trip
@@ -953,14 +1017,14 @@ class PTTrip(Route):
         # Then the shape has already been recorded
         # So now we look at the number of stops, and the start and end time to work out if the two trips are the same
         # but just start at different times of the day (e.g. an hourly bus).
-        print begin_seconds_past_midnight, end_seconds_past_midnight
         q = Template('SELECT MIN(date), MAX(date), trip_id FROM intervals WHERE shape_id = "$shape_id" GROUP BY trip_id')
         query= q.substitute(shape_id = shapeID)
         self.cur.execute(query)
+        rranges = self.cur.fetchall()
         
-        DONOTREWRITE, WRITEANEW = False, False # Assume trip has not been recorded, until shown otherwise
+        DONOTREWRITE, WRITEANEW = False, True # Assume trip has not been recorded, until shown otherwise
         tripDuration = end_seconds_past_midnight - begin_seconds_past_midnight
-        for rrange in self.cur.fetchall():
+        for rrange in rranges:
           recordedDuration = rrange[1] - rrange[0]
           if rrange[2] == self.trip_id:
             # Found a trip has already been recorded.
@@ -974,13 +1038,21 @@ class PTTrip(Route):
             # so there is no break in this branch.
             WRITEANEW = True
           elif recordedDuration == tripDuration:
-            # Then the shape has been seen already, going at the same speed.
-            # So we can COPY ITS ROWS.
-            # We need to get each of its rows, and simply replace each of the time past midnights with new ones.
-            # Commit this to the database
-            # Then WRITEANEW = False
-            # Then Break
-            ## some code! TO DO NEXT
+            # How much after (or even before) is this trip? Need to offset the existing rows by this amount.
+            timediff = begin_seconds_past_midnight - rrange[0]
+            # Grab the rows to offset then copy back into the table.
+            q = Template('SELECT * FROM intervals WHERE trip_id = "$trip_id" ORDER BY date')
+            query = q.substitute(trip_id = rrange[2])
+            self.cur.execute(query)
+            rows = self.cur.fetchall()
+            time.sleep(1) # Forces a 1 second wait to stop conflicts
+            
+            for row in rows:
+              # Copy its rows, just replace the time with the offset time
+              offsetTime = row[1] + timediff
+              self.cur.execute('INSERT INTO intervals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (self.trip_id, offsetTime, row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9]))
+            self.database.commit()
+            WRITEANEW = False
             break
         
       if WRITEANEW == True and DONOTREWRITE == False:
@@ -988,11 +1060,19 @@ class PTTrip(Route):
         # For each <interval> in the trip's duration, add the position of the trip as a (X,Y,) tuple, to a list
         positions = []
         for second in range(begin_seconds_past_midnight, end_seconds_past_midnight+1, interval):
-          print second
           elapsed = datetime.timedelta(seconds=second)                      # e.g. 24500 seconds
           current_time = (datetime.datetime.min + elapsed).time()           # e.g. 24500 seconds would become
                                                                             # datetime.time(6, 48, 20)=06:48:20.000
           positions.append([second, self.whereIsVehicle(current_time, DayObj)]) # Seconds past midnight, followed by position
+        
+        # Once done, if the end time is not divisible by the interval
+        # We need to append that special case to ensure the end of the trip is always shown
+        # This is important for inferring trip duration from the intervals table
+        if end_seconds_past_midnight%interval != 0:
+          elapsed = datetime.timedelta(seconds=end_seconds_past_midnight)
+          current_time = (datetime.datetime.min + elapsed).time()
+          positions.append([end_seconds_past_midnight, self.whereIsVehicle(current_time, DayObj)])
+          
         trip_summary = {"TripID": self.trip_id,
                         "Position": positions,
                         "Modetype": self.getRoute().getMode().modetype,
@@ -1002,15 +1082,18 @@ class PTTrip(Route):
         
         if updateDB == True:
           for position in trip_summary["Position"]:
-            self.cur.execute('INSERT INTO intervals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (trip_summary["TripID"], position[0], position[1][0], position[1][1], trip_summary["Modetype"], None, None, trip_summary["Operator"], trip_summary["RouteID"], trip_summary["ShapeID"]))
+            if position[0] < 86400:
+              # i.e., before midnight, not after it or on it
+              self.cur.execute('INSERT INTO intervals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (trip_summary["TripID"], position[0], position[1][0], position[1][1], trip_summary["Modetype"], None, None, trip_summary["Operator"], trip_summary["RouteID"], trip_summary["ShapeID"]))
           self.database.commit()
-          
-        return trip_summary
+        return None
       
     else:
       # The trip does not operate on DayObj, so forget about it.
       # Or it has already been written.
       return None
+    
+    return None
 
   def animateTrip(self, save=False):
     '''
@@ -1160,14 +1243,21 @@ class Stop(Database):
 
 ## Testing PTTrip.SecondBySecondPosition
 myDatabase = Database(myDB)
-print myDatabase.checkTableEmpty()
-myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 3))
-myPTTrip = PTTrip(myDB, trip_id=601) # 4650=A 130 bus # 6434=A HVL train
-print myPTTrip.doesRouteRunOn(myDay)
+myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
 
 dur()
-summary = myPTTrip.intervalByIntervalPosition(myDay, interval=90)
-dur('myPTTrip.intervalByIntervalPosition(myDay, interval=90)')
+i = 70
+for trip in myDatabase.getAllTrips(myDay):
+  if trip.trip_id >= i and trip.trip_id <= 120:
+    dur()
+    print trip.trip_id
+    myDatabase = Database(myDB)
+    myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
+    trip.intervalByIntervalPosition(myDay, interval=1)
+    dur('myPTTrip.intervalByIntervalPosition(myDay, interval=1)')
+    myDB.commit()
+    i += 1
+
 
 ################################################################################
 ################################ End ###########################################

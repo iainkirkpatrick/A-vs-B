@@ -904,12 +904,14 @@ import time
 now = time.strftime("%Y%m%d_%H%M%S", time.localtime())
 
 # Which GTFS? Where is this place?
-#GTFSLocation = "G:\\Documents\\WellingtonTransportViewer\\Data\\metlink-archiver_20130712_0326\\" # Unzipped folder
-GTFSLocation = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/metlink-archiver_20130712_0326_subset/"
+##GTFSLocation = "G:\\Documents\\WellingtonTransportViewer\\Data\\metlink-archiver_20130712_0326\\" # Unzipped folder
+##GTFSLocation = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/metlink-archiver_20130712_0326_subset/"
+GTFSLocation = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/metlink-archiver_20130712_0326/"
 continent = "Oceania"
 country = "New Zealand"
 city = "Wellington"
-db_str = "GTFSSQL_" + city + "_" + now + "__SUBSET__.db"
+##db_str = "GTFSSQL_" + city + "_" + now + "__SUBSET__.db"
+db_str = "GTFSSQL_" + city + "_" + now + ".db"
 db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB
 
 if writeDB == True:
