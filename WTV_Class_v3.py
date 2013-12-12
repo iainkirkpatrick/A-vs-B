@@ -14,11 +14,14 @@
 #                           > getAgencies()                   ::Returns cur.fetchall() of the agency table::
 #                           > getAllTrips(DayObj)             ::Returns a list of PTTrip objects representing those trips that run at least once on <DayObj>::
 #                           > getSittingStops(second, DayObj) ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>::
+#                           > animateSystem(DayObj, starttime=datetime.time(8), endtime=datetime.time(9), interval=60) :FUCKED:Displays (and can write) a video of the entire PT system, at intervals of <interval> (in seconds). By default, visualises the system between 8am and 9am. Uses matplotlib, matplotlib.basemap, and matplotlib.animate::
+#                           > checkTableEmpty(tableName="intervals") :: Checks if <tableName> (str) has any rows; returns Boolean to that effect::
 
 #                         Day(Database)                       ::A date. PT runs by daily schedules, considering things like whether it is a weekday, etc::
 #                           > __init__(database, datetimeObj) ::<database> is a Database object. <datetimeObj> is a datetime object::
 #                           > getCanxServices()               :CAUTION:Returns a list of PTService objects that are cancelled according to the calendar_dates table. For Wellington I suspect this table is a little dodgy::
 #                           > getServices()                   :Returns a list of PTService objects that are scheduled to run on the day represented by datetimeObj. Currently set to ignore the information in the calendar_dates table::
+#                           > plotModeSplitNVD3(databaseObj, city) ::Uses the Python-NVD3 library to plot a pie chart showing the breakdown of vehicle modes (num. services) in Day. Useful to compare over time, weekday vs. weekend, etc. <city> is str, used in the title of the chart::
 
 #                         Mode(Database)                      ::A vehicle class, like "Bus", "Rail", "Ferry" and "Cable Car"::
 #                           > __init__(database, modetype)    ::<database> is a Database object. <modetype> is a string (as above) of the mode of interest::
@@ -61,6 +64,7 @@
 #                           > animateTrip()                   :Needs improvement:Uses maptplotlib.animate and self.getShapelyLine() to animate the drawing of a trip's route. Does not account for stops (yet?)::
 #                           > whereIsVehicle(second, DayObj)  ::Returns a tuple (x, y) or (lon, lat) of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object::
 #                           > intervalByIntervalPosition(DayObj, interval=1) ::WRITES TO THE DATABASE about the positions of every vehicle on <DayObj> at the temporal resolution of <interval>. Does not write duplicates. Make sure to only pass it PTTrips that doesTripRunOn(DayObj) == True::
+#                           > get ShapeID()                   ::Each trip has a particular shape, this returns the ID of it (str)::
 
 #                         Stop(Object)                        ::A place where PT vehicles stop within a route::
 #                           > __init__(database, stop_id)     ::<database> is a Database object. <stop_id> is an Integer identifying the trip uniquely, able to link it to stop_times. See the database::
@@ -261,7 +265,7 @@ class Database(object):
         sittingstops.append(sittingstop)
     return sittingstops
 
-  def animateSystem(self, DayObj, starttime=datetime.time(8), endtime=datetime.time(8, 1), interval=60):
+  def animateSystem(self, DayObj, starttime=datetime.time(8), endtime=datetime.time(9), interval=60):
     '''
     Displays (and can save) a video of the entire PT system, at intervals of <interval> (in seconds).
     Use interval=1 for best results, as scheduled stops are recorded to the nearest second.
@@ -1245,19 +1249,20 @@ class Stop(Database):
 myDatabase = Database(myDB)
 myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
 
-dur()
-i = 70
-for trip in myDatabase.getAllTrips(myDay):
-  if trip.trip_id >= i and trip.trip_id <= 120:
-    dur()
-    print trip.trip_id
+interval=1 # Temporal resolution, in seconds
+dur() # Initiate timer
+i = 70 # Start at trip_id=i
+for trip in myDatabase.getAllTrips(myDay): # For all trips on myDay
+  dur('myDatabase.getAllTrips(myDay)') # How long to work get trip objects for myDay?
+  if trip.trip_id >= i and trip.trip_id <= 120: # Control number to be processed
+    dur() # Re-initiate timer, once for each trip
     myDatabase = Database(myDB)
     myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-    trip.intervalByIntervalPosition(myDay, interval=1)
-    dur('myPTTrip.intervalByIntervalPosition(myDay, interval=1)')
-    myDB.commit()
-    i += 1
-
+    trip.intervalByIntervalPosition(myDay, interval=interval)
+    process="Trip=%s, i=%i myPTTrip.intervalByIntervalPosition(myDay, interval=%i)" % (trip.trip_id, i, interval)
+    dur(process) # How long did it take to process the record?
+    myDB.commit() # Commit to database
+    i += 1 # Next index, in parallel with trip_id
 
 ################################################################################
 ################################ End ###########################################
