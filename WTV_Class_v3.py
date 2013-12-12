@@ -1245,16 +1245,21 @@ class Stop(Database):
 ########################## Testing Section #####################################
 ################################################################################
 
-## Testing PTTrip.SecondBySecondPosition
+## Testing PTTrip.intervalByIntervalPosition -- building the animation database!
 myDatabase = Database(myDB)
 myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
 
 interval=1 # Temporal resolution, in seconds
 dur() # Initiate timer
-i = 70 # Start at trip_id=i
-for trip in myDatabase.getAllTrips(myDay): # For all trips on myDay
-  dur('myDatabase.getAllTrips(myDay)') # How long to work get trip objects for myDay?
-  if trip.trip_id >= i and trip.trip_id <= 120: # Control number to be processed
+i = 781 # Start at trip_id=i
+allTrips = myDatabase.getAllTrips(myDay)
+dur('myDatabase.getAllTrips(myDay)') # How long to work get trip objects for myDay?
+
+endtime = datetime.time(21, 30) # End time for processing
+
+for trip in allTrips: # For all trips on myDay
+  current_time = datetime.datetime.now().time()
+  if trip.trip_id >= i and current_time < endtime: # Control start index, and end processing time -- get some sleep!
     dur() # Re-initiate timer, once for each trip
     myDatabase = Database(myDB)
     myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
@@ -1263,6 +1268,16 @@ for trip in myDatabase.getAllTrips(myDay): # For all trips on myDay
     dur(process) # How long did it take to process the record?
     myDB.commit() # Commit to database
     i += 1 # Next index, in parallel with trip_id
+
+# When done, play some noise to let me know
+import pygame
+pygame.init()
+pygame.mixer.init()
+sound = pygame.mixer.Sound("test.wav")
+for i in range(0,5):
+  sound.play()
+  time.sleep(1)
+
 
 ################################################################################
 ################################ End ###########################################
