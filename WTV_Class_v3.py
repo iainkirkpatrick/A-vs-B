@@ -1276,7 +1276,7 @@ myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
 
 interval=1 # Temporal resolution, in seconds
 dur() # Initiate timer
-i = 2740 # Start at trip_id=i
+i = 2853 # Start at trip_id=i
 allTrips = myDatabase.getAllTrips(myDay)
 dur('myDatabase.getAllTrips(myDay)') # How long to work get trip objects for myDay?
 
