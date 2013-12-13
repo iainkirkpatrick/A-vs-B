@@ -899,81 +899,105 @@ class PTTrip(Route):
 
     Returns a (lon, lat) tuple.
     '''
+    # Get all the stops that the trip visits
+    q = Template('SELECT ST.*, S.stop_lat, S.stop_lon FROM stop_times AS ST JOIN stops AS S ON S.stop_id = ST.stop_id WHERE trip_id = $trip_id ORDER BY stop_sequence')
+    query = q.substitute(trip_id = self.trip_id)
+    self.cur.execute(query)
+    stop_times = self.cur.fetchall()
+
+    latest = datetime.time(23,59,59)
+    
+    # Check if the trip is even operating at <second>
     try:
-      # Get all the stops that the trip visits
-      q = Template('SELECT ST.*, S.stop_lat, S.stop_lon FROM stop_times AS ST JOIN stops AS S ON S.stop_id = ST.stop_id WHERE trip_id = $trip_id ORDER BY stop_sequence')
-      query = q.substitute(trip_id = self.trip_id)
-      self.cur.execute(query)
-      stop_times = self.cur.fetchall()
-
-      # Check if the trip is even operating at <second>
       overall_start = datetime.time(int(stop_times[0][1][0:2]), int(stop_times[0][1][3:5]), int(stop_times[0][1][6:8]), int(stop_times[0][1][9:12]))
-      overall_end = datetime.time(int(stop_times[-1][2][0:2]), int(stop_times[-1][2][3:5]), int(stop_times[-1][2][6:8]), int(stop_times[-1][2][9:12]))
-      if second >= overall_start and second <= overall_end:
-        # Then the trip is operating at <second>
-        # Now, refine the precise position using scheduled times.
-
-        i = 0 # index the stop searching so we can query the next stop in the sequence
-        for stop in stop_times:
-          arrival1 = datetime.time(int(stop[1][0:2]), int(stop[1][3:5]), int(stop[1][6:8]), int(stop[1][9:12]))
-          departure1 = datetime.time(int(stop[2][0:2]), int(stop[2][3:5]), int(stop[2][6:8]), int(stop[2][9:12]))
-          if second >= arrival1 and second <= departure1:
-            # If the trip dwells at the stop and second is within the dwell time range,
-            # Return the X, Y of the current stop because we have found the vehicle.
-            return (stop[12], stop[11]) # lon, lat
-          arrival2 = datetime.time(int(stop_times[i+1][1][0:2]), int(stop_times[i+1][1][3:5]), int(stop_times[i+1][1][6:8]), int(stop_times[i+1][1][9:12]))
-          departure2 = datetime.time(int(stop_times[i+1][2][0:2]), int(stop_times[i+1][2][3:5]), int(stop_times[i+1][2][6:8]), int(stop_times[i+1][2][9:12]))
-          if second >= arrival2 and second <= departure2:
-            # If the trip dwells at the next stop and second is within the dweel time range,
-            # Return the X, Y of the next stop because we have found the vehicle.
-            return (stop_times[i+1][12], stop_times[i+1][11]) # lon, lat
-          if second > departure1 and second < arrival2:
-            # If the vehicle is after the first stop but has not yet arrived at the second stop,
-            # Then the vehicle is between the two stops,
-            # And the task is to infer its location based on distance and time.
-
-            # How many seconds ahead of the departure from stop 1 is <second>?
-            secondsahead = datetime.datetime.combine(myDay.datetimeObj, second) - datetime.datetime.combine(myDay.datetimeObj, departure1)
-            secondsahead = float(secondsahead.seconds)
-
-            # How many seconds does it take for the vehicle to travel from stop 1 to stop 2?
-            timeDelta = datetime.datetime.combine(myDay.datetimeObj, arrival2) - datetime.datetime.combine(myDay.datetimeObj, arrival1) # Computes time difference
-            timeDelta = float(timeDelta.seconds) # Returns the value purely in seconds
-
-            # Therefore, as a proportion of the travel time between stop 1 and stop 2,
-            # how far has the vehicle progressed?
-            time_ans = secondsahead / timeDelta
-
-            # How far is stop 1 from the beginning of the route?
-            stop1Dist = stop[10]
-
-            # What is the road distance between stop 1 and stop 2?
-            diffDist = stop_times[i+1][10] - stop1Dist
-
-            # Therefore, in distance units, how far along the trip is the vehicle?
-            dist_ans = stop1Dist + (time_ans * diffDist)
-
-            # How long is the trip, in total?
-            totaltripdist = float(stop_times[-1][10])
-
-            # Finally, what proportion of the route has the vehicle travelled?
-            proportionTravelled = dist_ans/totaltripdist
-
-            # With that, we can interpolate the vehicle's XY position
-            routeShape = self.getShapelyLine()
-            interpolatedPosition = routeShape.interpolate(proportionTravelled * routeShape.length)
-            return (interpolatedPosition.x, interpolatedPosition.y) # lon, lat
-
-          i += 1
-          # If the vehicle is not at or between 1 or 2, then the for loop proceeds to consider stops 2 and 3, until a 
-          # solution is found.
-
-      else:
-        return None
-
     except ValueError:
-      # If ValueError, the time is beyond 24:00:000...
-      # Address this later.
+      if int(stop_times[0][1][0:2]) >= 24:
+        # Then the vehicle is operating beyond midnight
+        overall_start = latest
+    try:
+      overall_end = datetime.time(int(stop_times[-1][2][0:2]), int(stop_times[-1][2][3:5]), int(stop_times[-1][2][6:8]), int(stop_times[-1][2][9:12]))
+    except ValueError:
+      if int(stop_times[-1][2][0:2]) >= 24:
+        # Then the vehicle is operating beyond midnight
+        overall_end = latest
+    
+    if second >= overall_start and second <= overall_end:
+      # Then the trip is operating at <second>
+      # Now, refine the precise position using scheduled times.
+
+      i = 0 # index the stop searching so we can query the next stop in the sequence
+      for stop in stop_times:
+        
+        try:
+          arrival1 = datetime.time(int(stop[1][0:2]), int(stop[1][3:5]), int(stop[1][6:8]), int(stop[1][9:12]))
+        except ValueError:
+          arrival1 = latest
+        try:
+          departure1 = datetime.time(int(stop[2][0:2]), int(stop[2][3:5]), int(stop[2][6:8]), int(stop[2][9:12]))
+        except ValueError:
+          departure1 = latest
+          
+        if second >= arrival1 and second <= departure1:
+          # If the trip dwells at the stop and second is within the dwell time range,
+          # Return the X, Y of the current stop because we have found the vehicle.
+          return (stop[12], stop[11]) # lon, lat
+        
+        try:
+          arrival2 = datetime.time(int(stop_times[i+1][1][0:2]), int(stop_times[i+1][1][3:5]), int(stop_times[i+1][1][6:8]), int(stop_times[i+1][1][9:12]))
+        except ValueError:
+          arrival2 = latest
+        try:
+          departure2 = datetime.time(int(stop_times[i+1][2][0:2]), int(stop_times[i+1][2][3:5]), int(stop_times[i+1][2][6:8]), int(stop_times[i+1][2][9:12]))
+        except:
+          departure2 = latest
+          
+        if second >= arrival2 and second <= departure2:
+          # If the trip dwells at the next stop and second is within the dwell time range,
+          # Return the X, Y of the next stop because we have found the vehicle.
+          return (stop_times[i+1][12], stop_times[i+1][11]) # lon, lat
+        
+        if second > departure1 and second < arrival2:
+          # If the vehicle is after the first stop but has not yet arrived at the second stop,
+          # Then the vehicle is between the two stops,
+          # And the task is to infer its location based on distance and time.
+
+          # How many seconds ahead of the departure from stop 1 is <second>?
+          secondsahead = datetime.datetime.combine(myDay.datetimeObj, second) - datetime.datetime.combine(myDay.datetimeObj, departure1)
+          secondsahead = float(secondsahead.seconds)
+
+          # How many seconds does it take for the vehicle to travel from stop 1 to stop 2?
+          timeDelta = datetime.datetime.combine(myDay.datetimeObj, arrival2) - datetime.datetime.combine(myDay.datetimeObj, arrival1) # Computes time difference
+          timeDelta = float(timeDelta.seconds) # Returns the value purely in seconds
+
+          # Therefore, as a proportion of the travel time between stop 1 and stop 2,
+          # how far has the vehicle progressed?
+          time_ans = secondsahead / timeDelta
+
+          # How far is stop 1 from the beginning of the route?
+          stop1Dist = stop[10]
+
+          # What is the road distance between stop 1 and stop 2?
+          diffDist = stop_times[i+1][10] - stop1Dist
+
+          # Therefore, in distance units, how far along the trip is the vehicle?
+          dist_ans = stop1Dist + (time_ans * diffDist)
+
+          # How long is the trip, in total?
+          totaltripdist = float(stop_times[-1][10])
+
+          # Finally, what proportion of the route has the vehicle travelled?
+          proportionTravelled = dist_ans/totaltripdist
+
+          # With that, we can interpolate the vehicle's XY position
+          routeShape = self.getShapelyLine()
+          interpolatedPosition = routeShape.interpolate(proportionTravelled * routeShape.length)
+          return (interpolatedPosition.x, interpolatedPosition.y) # lon, lat
+
+        i += 1
+        # If the vehicle is not at or between 1 or 2, then the for loop proceeds to consider stops 2 and 3, until a 
+        # solution is found.
+
+    else:
       return None
 
   def intervalByIntervalPosition(self, DayObj, interval=1, updateDB=True):
@@ -1064,10 +1088,11 @@ class PTTrip(Route):
         # For each <interval> in the trip's duration, add the position of the trip as a (X,Y,) tuple, to a list
         positions = []
         for second in range(begin_seconds_past_midnight, end_seconds_past_midnight+1, interval):
-          elapsed = datetime.timedelta(seconds=second)                      # e.g. 24500 seconds
-          current_time = (datetime.datetime.min + elapsed).time()           # e.g. 24500 seconds would become
-                                                                            # datetime.time(6, 48, 20)=06:48:20.000
-          positions.append([second, self.whereIsVehicle(current_time, DayObj)]) # Seconds past midnight, followed by position
+          if second < 86400: # Not at or after midnight
+            elapsed = datetime.timedelta(seconds=second)                      # e.g. 24500 seconds
+            current_time = (datetime.datetime.min + elapsed).time()           # e.g. 24500 seconds would become
+                                                                              # datetime.time(6, 48, 20)=06:48:20.000
+            positions.append([second, self.whereIsVehicle(current_time, DayObj)]) # Seconds past midnight, followed by position
         
         # Once done, if the end time is not divisible by the interval
         # We need to append that special case to ensure the end of the trip is always shown
@@ -1251,11 +1276,11 @@ myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
 
 interval=1 # Temporal resolution, in seconds
 dur() # Initiate timer
-i = 781 # Start at trip_id=i
+i = 2740 # Start at trip_id=i
 allTrips = myDatabase.getAllTrips(myDay)
 dur('myDatabase.getAllTrips(myDay)') # How long to work get trip objects for myDay?
 
-endtime = datetime.time(21, 30) # End time for processing
+endtime = datetime.time(22, 30) # End time for processing
 
 for trip in allTrips: # For all trips on myDay
   current_time = datetime.datetime.now().time()
@@ -1264,7 +1289,7 @@ for trip in allTrips: # For all trips on myDay
     myDatabase = Database(myDB)
     myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
     trip.intervalByIntervalPosition(myDay, interval=interval)
-    process="Trip=%s, i=%i myPTTrip.intervalByIntervalPosition(myDay, interval=%i)" % (trip.trip_id, i, interval)
+    process="Trip=%s, i=%i, mode=%s myPTTrip.intervalByIntervalPosition(myDay, interval=%i)" % (trip.trip_id, i, trip.getMode().modetype, interval)
     dur(process) # How long did it take to process the record?
     myDB.commit() # Commit to database
     i += 1 # Next index, in parallel with trip_id
