@@ -373,6 +373,7 @@ class Day(Database):
     from mpl_toolkits.basemap import Basemap
     from shapely.geometry import Polygon
     import pylab
+    import numpy as np
     
     self.cur.execute('SELECT MAX(stop_lat), MIN(stop_lat), MAX(stop_lon), MIN(STOP_lon) FROM stops')
     boundary = self.cur.fetchall()[0]
@@ -430,9 +431,21 @@ class Day(Database):
       plt.savefig(filename)
       
       plt.clf()
-      #return plt.show()
-
-
+      
+    import cv2, cv
+    from PIL import Image
+    from StringIO import StringIO
+    sample = cv2.imread(filename)
+    fourcc = cv.CV_FOURCC('D', 'I', 'V', 'X')
+    fps = 30 # Note: Chris was doing 10 minutes per second
+             # For interval=1, that's 600
+    height, width, layers = sample.shape
+    video = cv2.VideoWriter('TestImages/Video.avi', fourcc, fps, (width,height), 1);
+    for i in range(start, end+1):
+      img = "TestImages/%i.png" % i
+      cap = cv2.imread(img)
+      video.write(cap)
+    
 class Mode(Database):
   '''
   A class of vehicle that has particular properties it does not share with other vehicles.
