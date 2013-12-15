@@ -1030,7 +1030,38 @@ class PTTrip(Route):
       stops = self.getStopsInSequence()
       start_time, end_time = stops[0], stops[-1]
       start_time, end_time = start_time.getStopTime(self), end_time.getStopTime(self)
-      start_time, end_time = start_time["arrival_time"], end_time["arrival_time"]
+      
+      if len(start_time) == 1 and len(end_time) == 1:
+        # Then the route does not end where it starts, like most routes
+        start_time, end_time = start_time["arrival_time"], end_time["arrival_time"]
+        
+      elif len(start_time) == 2 and len(end_time) == 2:
+        # Then the first and last stops are visited twiintervalByIntervalPositionce: a loop route
+        # Likely, it is a loop that starts and ends at the same place
+        # The earlier one will have a lower stop sequence than the later one
+        
+        # For the beginning of the route
+        sequences = []
+        for stop in start_time:
+          sequences.append(stop["stop_sequence"])
+        earlier = min(sequences)
+        for stop in start_time:
+          if stop["stop_sequence"] == earlier:
+            start_time = stop["arrival_time"]
+        
+        # For the terminus of the route
+        sequences = []
+        for stop in end_time:
+          sequences.append(stop["stop_sequence"])
+        later = max(sequences)
+        for stop in end_time:
+          if stop["stop_sequence"] == later:
+            end_time = stop["arrival_time"]
+        
+      else:
+        # A super loop?
+        raise Exception
+      
       # Convert the start_time and end_time strings into seconds to add to DayObj
       begin_seconds_past_midnight = int(start_time[0:2])*60*60 + int(start_time[3:5])*60 + int(start_time[6:8])
       end_seconds_past_midnight = int(end_time[0:2])*60*60 + int(end_time[3:5])*60 + int(end_time[6:8])
@@ -1262,9 +1293,23 @@ class Stop(Database):
     q = Template('SELECT stop_sequence, arrival_time, departure_time, pickup_type_text, drop_off_type_text, shape_dist_traveled FROM stop_times WHERE stop_id = "$stop_id" and trip_id = "$trip_id"')
     query = q.substitute(stop_id = self.stop_id, trip_id = TripObj.trip_id)
     self.cur.execute(query)
-    stop_time = self.cur.fetchall()[0]
-    stop_time = {"stop_sequence":int(stop_time[0]), "arrival_time":stop_time[1], "departure_time":stop_time[2], "pickup_type_text":stop_time[3], "drop_off_type_text":stop_time[4], "shape_dist_traveled":float(stop_time[5])}
-    return stop_time
+    stops = self.cur.fetchall()
+    if len(stops) == 1:
+      # Then the trip only visits that stop once in its trip
+      stop_time = stops[0]
+      stop_time = {"stop_sequence":int(stop_time[0]), "arrival_time":stop_time[1], "departure_time":stop_time[2], "pickup_type_text":stop_time[3], "drop_off_type_text":stop_time[4], "shape_dist_traveled":float(stop_time[5])}
+      return stop_time
+    else:
+      # Then the trip makes multiple visits to that stop in its trip
+      # e.g. a loop that starts and stops at the same place
+      # Such as trips 13, 14 and 15 (N001 Wellington)
+      # So return a list of stop_times
+      stop_times = []
+      for stop_time in stops:
+        stop_time = {"stop_sequence":int(stop_time[0]), "arrival_time":stop_time[1], "departure_time":stop_time[2], "pickup_type_text":stop_time[3], "drop_off_type_text":stop_time[4], "shape_dist_traveled":float(stop_time[5])}
+        stop_times.append(stop_time)
+      return stop_times # A list of dictionaries
+        
 
 ################################################################################
 ########################## Testing Section #####################################
@@ -1276,11 +1321,12 @@ myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
 
 interval=1 # Temporal resolution, in seconds
 dur() # Initiate timer
-i = 2853 # Start at trip_id=i
+
 allTrips = myDatabase.getAllTrips(myDay)
-dur('myDatabase.getAllTrips(myDay)') # How long to work get trip objects for myDay?
+dur('myDatabase.getAllTrips(myDay)') # How long did it take to get all trip objects for myDay?
 
 endtime = datetime.time(22, 30) # End time for processing
+i = 1
 
 for trip in allTrips: # For all trips on myDay
   current_time = datetime.datetime.now().time()
