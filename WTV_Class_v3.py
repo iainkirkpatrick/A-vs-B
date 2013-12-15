@@ -14,7 +14,6 @@
 #                           > getAgencies()                   ::Returns cur.fetchall() of the agency table::
 #                           > getAllTrips(DayObj)             ::Returns a list of PTTrip objects representing those trips that run at least once on <DayObj>::
 #                           > getSittingStops(second, DayObj) ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>::
-#                           > animateSystem(DayObj, starttime=datetime.time(8), endtime=datetime.time(9), interval=60) :FUCKED:Displays (and can write) a video of the entire PT system, at intervals of <interval> (in seconds). By default, visualises the system between 8am and 9am. Uses matplotlib, matplotlib.basemap, and matplotlib.animate::
 #                           > checkTableEmpty(tableName="intervals") :: Checks if <tableName> (str) has any rows; returns Boolean to that effect::
 
 #                         Day(Database)                       ::A date. PT runs by daily schedules, considering things like whether it is a weekday, etc::
@@ -22,6 +21,7 @@
 #                           > getCanxServices()               :CAUTION:Returns a list of PTService objects that are cancelled according to the calendar_dates table. For Wellington I suspect this table is a little dodgy::
 #                           > getServices()                   :Returns a list of PTService objects that are scheduled to run on the day represented by datetimeObj. Currently set to ignore the information in the calendar_dates table::
 #                           > plotModeSplitNVD3(databaseObj, city) ::Uses the Python-NVD3 library to plot a pie chart showing the breakdown of vehicle modes (num. services) in Day. Useful to compare over time, weekday vs. weekend, etc. <city> is str, used in the title of the chart::
+#                           > animateDay()                      ::::
 
 #                         Mode(Database)                      ::A vehicle class, like "Bus", "Rail", "Ferry" and "Cable Car"::
 #                           > __init__(database, modetype)    ::<database> is a Database object. <modetype> is a string (as above) of the mode of interest::
@@ -61,7 +61,6 @@
 #                           > getShapelyLine()                ::Returns a Shapely Line object representing the shape of the trip::
 #                           > plotShapelyLine()               ::Uses matplotlib and Shapely to plot the shape of the trip. Does not plot stops (yet?)::
 #                           > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
-#                           > animateTrip()                   :Needs improvement:Uses maptplotlib.animate and self.getShapelyLine() to animate the drawing of a trip's route. Does not account for stops (yet?)::
 #                           > whereIsVehicle(second, DayObj)  ::Returns a tuple (x, y) or (lon, lat) of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object::
 #                           > intervalByIntervalPosition(DayObj, interval=1) ::WRITES TO THE DATABASE about the positions of every vehicle on <DayObj> at the temporal resolution of <interval>. Does not write duplicates. Make sure to only pass it PTTrips that doesTripRunOn(DayObj) == True::
 #                           > get ShapeID()                   ::Each trip has a particular shape, this returns the ID of it (str)::
@@ -265,88 +264,6 @@ class Database(object):
         sittingstops.append(sittingstop)
     return sittingstops
 
-  def animateSystem(self, DayObj, starttime=datetime.time(8), endtime=datetime.time(9), interval=60):
-    '''
-    Displays (and can save) a video of the entire PT system, at intervals of <interval> (in seconds).
-    Use interval=1 for best results, as scheduled stops are recorded to the nearest second.
-    By default, visualises the system between 8am and 9am.
-
-    Uses matplotlib, matplotlib.basemap, and matplotlib.animate.
-
-    ATM: IT'S FUCKED
-    '''
-    alltrips = self.getAllTrips(DayObj)
-    def xylims():
-      '''
-      Gets the X and Y limits of the graph,
-      defined as the max/min XY of all trips on the day.
-      '''
-      minx, miny, maxx, maxy = None, None, None, None
-      for trip in alltrips:
-        bounds = trip.getShapelyLine().bounds # (minx, miny, maxx, maxy)
-        if bounds[0] < minx or minx is None:
-          minx = bounds[0]
-        if bounds[1] < miny or miny is None:
-          miny = bounds[1]
-        if bounds[2] > maxx or maxx is None:
-          maxx = bounds[2]
-        if bounds[3] > maxy or maxy is None:
-          maxy = bounds[3]
-      return (minx, miny, maxx, maxy)
-
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    fig, ax = plt.subplots()
-    ax.set_aspect('equal')
-
-    stopx, stopy, vehiclex, vehicley = [], [], [], []
-
-    # range = seconds between start and endtimes
-    for t in range(0, 10):
-      if t == 0:
-        points, = ax.plot(stopx, stopy, marker='.', linestyle='None')
-        points2, = ax.plot(vehiclex, vehicley, marker='o', color='r', linestyle='None')
-
-        ## (minx, miny, maxx, maxy)
-        ##bounds = xylims()
-        ##bounds = (174.7212282, -41.34865225, 175.6846043, -38.84426454)
-        bounds = (174.7212282, -41.34865225, 175, -41.0)
-        ax.set_xlim(bounds[0], bounds[2])
-        ax.set_ylim(bounds[1], bounds[3])
-
-      else:
-        currenttime = (datetime.datetime.combine(DayObj.datetimeObj, starttime) + datetime.timedelta(seconds=interval*(t-1)))
-        #currentTime = starttime + datetime.timedelta(seconds=interval)
-        # while starttime < endtime
-
-        for stop in self.getSittingStops(datetime.time(currenttime.hour, currenttime.minute, currenttime.second, currenttime.microsecond), DayObj):
-          stopx.append(stop['stop_lon'])
-          stopy.append(stop['stop_lat'])
-        new_x = np.array(stopx)
-        new_y = np.array(stopy)
-
-        i = 0
-        for trip in alltrips:
-          if i > 10:
-            break
-          if trip.doesRouteRunOn(DayObj):
-            position = trip.whereIsVehicle((datetime.time(currenttime.hour, currenttime.minute, currenttime.second, currenttime.microsecond)), DayObj)
-            if position is not None:
-              vehiclex.append(position[0])
-              vehicley.append(position[1])
-              i += 1
-        new_vehiclex = np.array(vehiclex)
-        new_vehicley = np.array(vehicley)
-
-        points.set_data(new_x, new_y)
-        points2.set_data(new_vehiclex, new_vehicley)
-
-        stopx, stopy, vehiclex, vehicley = [], [], [], []
-
-        print currenttime, t, points
-      plt.pause(0.01)
-
 class Day(Database):
   '''
   A date. PT runs by daily schedules, considering things like whether it is a weekday, etc.
@@ -438,6 +355,82 @@ class Day(Database):
     output_file.write(chart.htmlcontent)    
     output_file.close()
     return None
+  
+  def animateDay(self, start, end):
+    '''
+    Animates the public transport system for self day.
+    
+    Psuedo code:
+    Pre: get the maximum and minimum x and y of all the data in the database?
+    1. Get all XYs of vehicles that operate in the first second
+    2. Display them
+    3. Get the next XYs
+    4. But do the above with basemap
+    '''
+    from matplotlib import pyplot as plt
+    import matplotlib
+    matplotlib.rcParams['backend'] = "Qt4Agg"
+    from mpl_toolkits.basemap import Basemap
+    from shapely.geometry import Polygon
+    import pylab
+    
+    self.cur.execute('SELECT MAX(stop_lat), MIN(stop_lat), MAX(stop_lon), MIN(STOP_lon) FROM stops')
+    boundary = self.cur.fetchall()[0]
+    maxy, miny, maxx, minx = boundary[0], boundary[1], boundary[2], boundary[3]
+    
+    #boundary = Polygon([(minx, maxy), (maxx, maxy), (maxx, miny), (minx, miny)])
+    #centrex, centrey = boundary.centroid.x, boundary.centroid.y
+    centrex, centrey = 174.777222, -41.2888889
+    maxy, minx, miny, maxx = -41, 174.6, -41.5, 175.1
+    
+    for i in range(start, end+1):
+    
+      m = Basemap(llcrnrlon=minx, llcrnrlat=miny, urcrnrlon=maxx, urcrnrlat=maxy, resolution='f',projection='cass',lon_0=centrex, lat_0=centrey)
+      m.drawcoastlines(linewidth=.2)
+      m.fillcontinents(color='#CDBC8E',lake_color='#677D6C')
+      m.drawmapboundary(fill_color='#677D6C')
+      
+      buslats, buslons, tralats, tralons, ccllats, ccllons, frylats, frylons = [], [], [], [], [], [], [], []
+      
+      q = Template('SELECT date, lat, lon, route_type_desc FROM intervals WHERE date = "$second"')
+      query = q.substitute(second = i)
+      self.cur.execute(query)
+      active = self.cur.fetchall()
+      
+      for vehicle in active:
+        if vehicle[3] == "Bus":
+          buslons.append(vehicle[1])
+          buslats.append(vehicle[2])
+        elif vehicle[3] == "Rail":
+          tralons.append(vehicle[1])
+          tralats.append(vehicle[2])
+        elif vehicle[3] == "Ferry":
+          frylons.append(vehicle[1])
+          frylats.append(vehicle[2])
+        elif vehicle[3] == "Cable Car":
+          ccllons.append(vehicle[1])
+          ccllats.append(vehicle[2])
+          
+      x,y = m(buslons,buslats)
+      m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
+      
+      x,y = m(frylons,frylats)
+      m.scatter(x,y,c='#0099FF',s=5, alpha=1, zorder=2, lw=0)
+      
+      x,y = m(ccllons,ccllats)
+      m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
+      
+      x,y = m(tralons,tralats)
+      m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
+      
+      title = "Time=%i" % i
+      plt.title(title)
+      
+      filename = "TestImages/%i.png" % i
+      plt.savefig(filename)
+      
+      plt.clf()
+      #return plt.show()
 
 
 class Mode(Database):
@@ -1155,69 +1148,6 @@ class PTTrip(Route):
     
     return None
 
-  def animateTrip(self, save=False):
-    '''
-    Uses matplotlib.animate to animate the route a trip takes.
-    Needs improvement: at the moment the 'speed' is simply determined by the density of vertices, and nothing else.
-    '''
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import matplotlib.animation as animation
-
-    def update_line(num, data, line):
-      '''
-      Function that makes the animation happen.
-      This is called sequentially, acccording to num
-      '''
-      line.set_data(data[...,num-1:num])
-      # [...,:num]=everything, revealed in sequence 
-      # [...,num-1:num]=only the most recent segment, nothing else is shown in each frame
-
-      time_text.set_text("Frame="+str(num))
-
-      # Returns the line object, which is important because this tells the animator
-      # which object on the plit to update after each frame.
-      # Note that it is returning a tuple of the plot ojects which have been modified
-      # (added, in this case), and are therefore animated.
-      return line, time_text,
-
-    fig1 = plt.figure() # Create a figure window
-    ax = fig1.add_subplot(111, aspect='equal', autoscale_on=True)
-    # Text to be updated with the animation
-    time_text = ax.text(0.02, 0.90, '', transform=ax.transAxes)
-
-    # Get the x,y data in two parallel lists, and place them in a numpy array
-    x, y = [],[]
-    for vertex in list(self.getShapelyLine().coords):
-      x.append(vertex[0])
-      y.append(vertex[1])
-    data = np.array([x, y])
-
-    # A line object that will be modified in the animation
-    # It first plots an empty line: data is added later
-    l, = plt.plot([], [], 'r.') # Color=r, line style=-
-
-    time_text.set_text('')
-
-    plt.xlim(min(data[0])-0.01, max(data[0])+0.01)
-    plt.ylim(min(data[1]-0.01), max(data[1])+0.01)
-    plt.xlabel('longitude')
-    plt.ylabel('latitude')
-    plt.title('Test: Naenae-Petone 130 Bus Animation')
-
-    # The line object needs to persist, so it is assigned to a variable, line_ani
-    # interval: N miliseconds delay between frames
-    # blit: tells the animation to only re-draw the pieces of the plot that have changed...
-      # which saves a lot of time and makes the animation display much more quickly.
-    line_ani = animation.FuncAnimation(fig1, update_line, len(x), fargs=(data, l),
-                                       interval=20, blit=False)
-    # For some reason blit=True keeps a zero underneath the text...
-
-    if save == True:
-      line_ani.save('test130bus.mp4')
-
-    return plt.show()    
-
 class Stop(Database):
   '''
   A stop is a place where a PT vehicle stops and passengers may board or depart. Routes are essentially comprised of an ordered sequence of Stops.
@@ -1315,6 +1245,7 @@ class Stop(Database):
 ########################## Testing Section #####################################
 ################################################################################
 
+'''
 ## Testing PTTrip.intervalByIntervalPosition -- building the animation database!
 myDatabase = Database(myDB)
 myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
@@ -1348,6 +1279,21 @@ sound = pygame.mixer.Sound("test.wav")
 for i in range(0,5):
   sound.play()
   time.sleep(1)
+'''
+
+'''
+## Testing Day.plotModeSplit_NVD3
+myDatabase = Database(myDB)
+myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
+
+myDay.plotModeSplit_NVD3(myDay, "Wellington")
+'''
+
+
+## Testing Day.animateDay
+myDatabase = Database(myDB)
+myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
+myDay.animateDay(46000, 46100)
 
 
 ################################################################################
