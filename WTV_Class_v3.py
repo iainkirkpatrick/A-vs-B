@@ -411,18 +411,34 @@ class Day(Database):
         elif vehicle[3] == "Cable Car":
           ccllons.append(vehicle[1])
           ccllats.append(vehicle[2])
-          
-      x,y = m(buslons,buslats)
-      m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
+            
+      try:
+        x,y = m(buslons,buslats)
+        m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
+      except:
+        x,y = m([0.0],[0.0])
+        m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
       
-      x,y = m(frylons,frylats)
-      m.scatter(x,y,c='#0099FF',s=5, alpha=1, zorder=2, lw=0)
+      try:
+        x,y = m(frylons,frylats)
+        m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
+      except:
+        x,y = m([0.0],[0.0])
+        m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
       
-      x,y = m(ccllons,ccllats)
-      m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
-      
-      x,y = m(tralons,tralats)
-      m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
+      try:
+        x,y = m(ccllons,ccllats)
+        m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
+      except:
+        x,y = m([0.0],[0.0])
+        m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
+        
+      try:
+        x,y = m(tralons,tralats)
+        m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
+      except:
+        x,y = m([0.0],[0.0])
+        m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
       
       title = "Time=%i" % i
       plt.title(title)
@@ -431,16 +447,17 @@ class Day(Database):
       plt.savefig(filename)
       
       plt.clf()
-      
+    
     import cv2, cv
     from PIL import Image
     from StringIO import StringIO
     sample = cv2.imread(filename)
     fourcc = cv.CV_FOURCC('D', 'I', 'V', 'X')
-    fps = 30 # Note: Chris was doing 10 minutes per second
-             # For interval=1, that's 600
+    fps = 100 # Note: Chris was doing 10 minutes per second
+              # For interval=1, that's 600
     height, width, layers = sample.shape
     video = cv2.VideoWriter('TestImages/Video.avi', fourcc, fps, (width,height), 1);
+    
     for i in range(start, end+1):
       img = "TestImages/%i.png" % i
       cap = cv2.imread(img)
@@ -833,7 +850,7 @@ class PTTrip(Route):
 
     return shape_id
 
-  def getShapelyLine(self):
+  def getShapelyLine(self, precise=True):
     '''
     Returns a Shapely Line object representing the trip.
     '''
@@ -842,10 +859,18 @@ class PTTrip(Route):
     self.cur.execute(query)
 
     vertices = []
-    for vertex in self.cur.fetchall():
-      vertices.append(vertex)
-
+    if precise == False:
+      for vertex in self.cur.fetchall():
+        newvertex0 = round(vertex[0], 7) # Restrict it to 7 dp, like the stops have.
+        newvertex1 = round(vertex[1], 7)
+        ##vertices.append(vertex)
+        vertices.append((newvertex0, newvertex1))
+    elif precise == True:
+      for vertex in self.cur.fetchall():
+        vertices.append(vertex)
+        
     line = LineString(vertices)
+    
 
     return line
 
@@ -1225,7 +1250,7 @@ class Stop(Database):
     query = q.substitute(stop_id = self.stop_id)
     self.cur.execute(query)
     loc = self.cur.fetchall()[0]
-    lat, lon = loc[0], loc[1]
+    lat, lon = round(loc[0], 7), round(loc[1], 7)
     return Point(lon, lat) # Shapely Point object... try Point.x, Point.y, etc.
 
   def getStopTime(self, TripObj):
@@ -1302,13 +1327,27 @@ myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
 myDay.plotModeSplit_NVD3(myDay, "Wellington")
 '''
 
-
-## Testing Day.animateDay
+'''
+## Testing Day.animateDay()
+dur()
 myDatabase = Database(myDB)
 myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-myDay.animateDay(46000, 46100)
+myDay.animateDay(0, 86399)
+dur("myDay.animateDay(0, 86399)")
+'''
+
+myDatabase = Database(myDB)
+myTrip = PTTrip(myDB, "16")
+string = "LINESTRING ("
+print myTrip.getShapelyLine()
+myTrip.cur.execute('SELECT * FROM intervals WHERE trip_id = "16"')
+print "Seconds, Point;"
+for i in myTrip.cur.fetchall():
+  print "%i, POINT (%.7f %.7f);" % (i[1], i[2], i[3])
+#for stop in myTrip.getStopsInSequence():
+  #print stop.getShapelyPoint()
 
 
-################################################################################
+###############################################################
 ################################ End ###########################################
 ################################################################################
