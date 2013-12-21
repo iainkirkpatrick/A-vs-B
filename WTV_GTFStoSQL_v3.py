@@ -107,7 +107,7 @@
 ## wheelchair_accessible_text TEXT
 
 #
-# interval
+# intervals
 ## trip_id INTEGER REFERENCES trips(trip_id)
 ## date DATETIME
 ## lat FLOAT
