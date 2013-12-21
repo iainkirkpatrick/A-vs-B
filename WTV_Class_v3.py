@@ -21,7 +21,10 @@
 #                           > getCanxServices()               :CAUTION:Returns a list of PTService objects that are cancelled according to the calendar_dates table. For Wellington I suspect this table is a little dodgy::
 #                           > getServices()                   :Returns a list of PTService objects that are scheduled to run on the day represented by datetimeObj. Currently set to ignore the information in the calendar_dates table::
 #                           > plotModeSplitNVD3(databaseObj, city) ::Uses the Python-NVD3 library to plot a pie chart showing the breakdown of vehicle modes (num. services) in Day. Useful to compare over time, weekday vs. weekend, etc. <city> is str, used in the title of the chart::
-#                           > animateDay()                      ::::
+#                           > animateDay()                    :Unfinished, but working:::
+#                           > countActiveTrips(second)        ::Returns an integer count of the number of trips of any mode that are operating at <second> on self::
+#                           > countActiveTripsByMode(second)  ::Returns an dictionary of {mode: integer} pairs similar to self.countActiveTrips(<second>) that breaks it down by mode::
+#                           > bokehFrequencyByMode(n, Show=False, name="frequency.py", title="frequency.py", graphTitle="Wellington Public Transport Services, ")  ::Returns an HTML graph of the number of active service every <n> seconds, on the second, broken down by mode::
 
 #                         Mode(Database)                      ::A vehicle class, like "Bus", "Rail", "Ferry" and "Cable Car"::
 #                           > __init__(database, modetype)    ::<database> is a Database object. <modetype> is a string (as above) of the mode of interest::
@@ -131,6 +134,9 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
 
+#from bokeh.plotting import *
+import bokeh.plotting
+
 from shapely.geometry import Point, LineString
 
 import sqlite3 as dbapi
@@ -140,6 +146,12 @@ db_str = "GTFSSQL_Wellington_20131208_215725.db" # Name of database
 db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB, change to necessary filepath
 myDB = dbapi.connect(db_pathstr) # Connect to DB
 myDB.text_factory = dbapi.OptimizedUnicode
+
+class CustomException(Exception):
+    def __init__(self, value):
+        self.parameter = value
+    def __str__(self):
+        return repr(self.parameter)
 
 class Database(object):
   '''
@@ -272,7 +284,7 @@ class Day(Database):
   def __init__(self, database, datetimeObj):
     '''
     <database> is a Database object.
-    <datetimeObj> is a datetime object.
+    <datetimeObj> is a datetime object, e.g. datetime.datetime(2013, 12, 8)
     '''
     Database.__init__(self, database)
     self.datetimeObj = datetimeObj
@@ -355,7 +367,173 @@ class Day(Database):
     output_file.write(chart.htmlcontent)    
     output_file.close()
     return None
+
+  def countActiveTrips(self, second, internalCall=False):
+    '''
+    Returns an integer count of the number of trips in operation during self at <second>.
+    <second> is a datetime.time object representing the seconds after midnight on self.
+    <internalCall> is used by self.countActiveTripsByMode
+    
+    Examples of <second>:
+    4pm (exactly, to the second) = datetime.datetime.time(16)
+    4.01pm (to the second) = datetime.datetime.time(16, 01)
+    4.01pm and 32 seconds = datetime.datetime.time(16, 01, 32)
+    # if you're silly and give it split seconds... I check and round to nearest whole second.
+    '''
+    # Fix up the time
+    # There could be more elegant ways...
+    if second.microsecond > 0:
+      msec = int(round(second.microsecond, -6)) # round to nearest million (0 or 1,000,000)
+      if msec > 0:
+        # If 1 million, add to seconds
+        secs = second.second + 1
+        mins = second.minute
+        hours = second.hour
+        if secs > 59:
+          # if 60 seconds, add to minutes
+          mins = second.minute + 1
+          secs = 0
+          if mins > 59:
+            # if 60 minutes, add to hours
+            hours = second.hour + 1
+            mins = 0
+            if hours > 23:
+                # If 24 hours, just take maximum
+                newsecond = datetime.time(23, 59, 59)
+      try:
+        hours
+      except:
+        hours = second.hour
+      try:
+        mins
+      except:
+        mins = second.minute
+      try:
+        secs
+      except:
+        secs = second.second
+      try:
+        newsecond
+      except NameError:
+        newsecond = datetime.time(hours, mins, secs)
+        
+    else:
+      newsecond = second
+      
+    # Use newsecond to get a count of the number of vehicles operating at second
+    # 1. convert newsecond to pure seconds
+    newsecond = str(newsecond.hour*3600 + newsecond.minute*60 + newsecond.second)
+    # 2. make and execute ths SQL statement
+    q = 'SELECT COUNT(DISTINCT trip_id) FROM intervals WHERE date = "%s"' % newsecond # Dont change this without referring to self.countActiveTripsByMode first
+    self.cur.execute(q)
+    if internalCall == False:
+      return self.cur.fetchone()[0]
+    else:
+      return q
   
+  def countActiveTripsByMode(self, second):
+    '''
+    Does the same as countActiveTrips(<second>), but returns a dictionary of {modetype: count} pairs.
+    '''
+    mode_count = {}
+    q = self.countActiveTrips(second, internalCall=True)
+    q = q[0:7] + "route_type_desc, " + q[7:] + "GROUP BY route_type_desc"
+    self.cur.execute(q)
+    for mode in self.cur.fetchall():
+      mode_count[mode[0]] = mode[1]
+    return mode_count
+  
+  def bokehFrequencyByMode(self, n, Show=False, name="frequency.html", pagetitle="frequency.py", graphTitle="Wellington Public Transport Services, "):
+    '''
+    Uses blokeh to make a HTML chart of the frequency of public transport over self (Day), at intervals of n
+    The chart begins at midnight on self, and ends at midnight 24 hours later.
+    <n> is considered in seconds.
+    <name> is a string that can be used to name the HTML file.
+    If <show> is true, opens the result in a browser automatically.
+    '''
+    
+    def incrementT(mode, count):
+      '''Adds to t'''
+      if mode == 'Rail':
+        increment = incrementSpecial(count)
+      else:
+        increment = count
+      return increment
+    
+    def incrementSpecial(count):
+      '''Special increment for a mode, e.g., to make a capacity graph'''
+      # example: Trains could be weighted 4 times as buses to reflect their size.
+      return count * 1
+    
+    def ifZeroCount():
+      '''The value to be used when the count is 0'''
+      return None
+    
+    seconds = [] # The x-axis
+    total, bus, rail, ferry, cablecar = [], [], [], [], [] # The lines (y-axis values)
+    
+    for sec in range(0, 24*3600, n):
+      seconds.append(sec)
+      t, addBus, addRail, addFerry, addCableCar = 0, False, False, False, False # Define values, assume absence
+      secs = datetime.timedelta(seconds=sec)
+      secs = str(secs).split(":")
+      h, m, s = int(secs[0]), int(secs[1]), int(secs[2])
+      mode_count = myDay.countActiveTripsByMode(datetime.time(h, m, s)) # Dictionary
+      for mode in mode_count: # For each mode in the city
+        if mode == 'Bus':
+          addBus = True
+          count = mode_count[mode]
+          t += incrementT(mode, count)
+          bus.append(count)
+        elif mode == 'Rail':
+          addRail = True
+          count = mode_count[mode]
+          t += incrementT(mode, count)
+          rail.append(incrementSpecial(count))
+        elif mode == 'Ferry':
+          addFerry = True
+          count = mode_count[mode]
+          t += incrementT(mode, count)
+          ferry.append(count)
+        elif mode == 'Cable Car':
+          addCableCar = True
+          count = mode_count[mode]
+          t += incrementT(mode, count)
+          cablecar.append(count)
+        else:
+          raise CustomException("You need to add another list for that modetype.")
+        
+      
+      if addBus == False:
+        bus.append(ifZeroCount())
+      if addRail == False:
+        rail.append(ifZeroCount())
+      if addFerry == False:
+        ferry.append(ifZeroCount())
+      if addCableCar == False:
+        cablecar.append(ifZeroCount())
+        
+      if t > 0:
+        total.append(t)
+      else:
+        total.append(ifZeroCount())
+          
+    bokeh.plotting.output_file(name, title=pagetitle)
+    bokeh.plotting.hold()
+    
+    bokeh.plotting.line(np.array(seconds), bus, color='#BA5F22', tools='pan,zoom,resize', legend="Bus")
+    bokeh.plotting.line(np.array(seconds), rail, color='#003300', tools='pan,zoom,resize', legend="Train")
+    bokeh.plotting.line(np.array(seconds), ferry, color='#0099FF', tools='pan,zoom,resize', legend="Ferry")
+    bokeh.plotting.line(np.array(seconds), cablecar, color='#FF0000', tools='pan,zoom,resize', legend="Cable Car")
+    
+    graphTitle = graphTitle + self.dayOfWeekStr.title() + ", " + str(self.datetimeObj.day) +"/"+ str(self.datetimeObj.month) +"/"+ str(self.datetimeObj.year)
+    bokeh.plotting.curplot().title = graphTitle
+    bokeh.plotting.grid().grid_line_alpha=0.3
+    bokeh.plotting.figure()
+    if Show == True:
+      bokeh.plotting.show()
+    return None
+          
   def animateDay(self, start, end):
     '''
     Animates the public transport system for self day.
@@ -373,7 +551,6 @@ class Day(Database):
     from mpl_toolkits.basemap import Basemap
     from shapely.geometry import Polygon
     import pylab
-    import numpy as np
     
     self.cur.execute('SELECT MAX(stop_lat), MIN(stop_lat), MAX(stop_lon), MIN(STOP_lon) FROM stops')
     boundary = self.cur.fetchall()[0]
@@ -993,11 +1170,13 @@ class PTTrip(Route):
           # And the task is to infer its location based on distance and time.
 
           # How many seconds ahead of the departure from stop 1 is <second>?
-          secondsahead = datetime.datetime.combine(myDay.datetimeObj, second) - datetime.datetime.combine(myDay.datetimeObj, departure1)
+          ##secondsahead = datetime.datetime.combine(myDay.datetimeObj, second) - datetime.datetime.combine(myDay.datetimeObj, departure1)
+          secondsahead = datetime.datetime.combine(DayObj.datetimeObj, second) - datetime.datetime.combine(DayObj.datetimeObj, departure1)
           secondsahead = float(secondsahead.seconds)
 
           # How many seconds does it take for the vehicle to travel from stop 1 to stop 2?
-          timeDelta = datetime.datetime.combine(myDay.datetimeObj, arrival2) - datetime.datetime.combine(myDay.datetimeObj, arrival1) # Computes time difference
+          ##timeDelta = datetime.datetime.combine(myDay.datetimeObj, arrival2) - datetime.datetime.combine(myDay.datetimeObj, arrival1) # Computes time difference
+          timeDelta = datetime.datetime.combine(DayObj.datetimeObj, arrival2) - datetime.datetime.combine(DayObj.datetimeObj, arrival1) # Computes time difference
           timeDelta = float(timeDelta.seconds) # Returns the value purely in seconds
 
           # Therefore, as a proportion of the travel time between stop 1 and stop 2,
@@ -1279,75 +1458,83 @@ class Stop(Database):
       return stop_times # A list of dictionaries
         
 
-################################################################################
-########################## Testing Section #####################################
-################################################################################
 
-'''
-## Testing PTTrip.intervalByIntervalPosition -- building the animation database!
-myDatabase = Database(myDB)
-myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-
-interval=1 # Temporal resolution, in seconds
-dur() # Initiate timer
-
-allTrips = myDatabase.getAllTrips(myDay)
-dur('myDatabase.getAllTrips(myDay)') # How long did it take to get all trip objects for myDay?
-
-endtime = datetime.time(22, 30) # End time for processing
-i = 1
-
-for trip in allTrips: # For all trips on myDay
-  current_time = datetime.datetime.now().time()
-  if trip.trip_id >= i and current_time < endtime: # Control start index, and end processing time -- get some sleep!
-    dur() # Re-initiate timer, once for each trip
-    myDatabase = Database(myDB)
-    myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-    trip.intervalByIntervalPosition(myDay, interval=interval)
-    process="Trip=%s, i=%i, mode=%s myPTTrip.intervalByIntervalPosition(myDay, interval=%i)" % (trip.trip_id, i, trip.getMode().modetype, interval)
-    dur(process) # How long did it take to process the record?
-    myDB.commit() # Commit to database
-    i += 1 # Next index, in parallel with trip_id
-
-# When done, play some noise to let me know
-import pygame
-pygame.init()
-pygame.mixer.init()
-sound = pygame.mixer.Sound("test.wav")
-for i in range(0,5):
-  sound.play()
-  time.sleep(1)
-'''
-
-'''
-## Testing Day.plotModeSplit_NVD3
-myDatabase = Database(myDB)
-myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-
-myDay.plotModeSplit_NVD3(myDay, "Wellington")
-'''
-
-'''
-## Testing Day.animateDay()
-dur()
-myDatabase = Database(myDB)
-myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-myDay.animateDay(0, 86399)
-dur("myDay.animateDay(0, 86399)")
-'''
-
-myDatabase = Database(myDB)
-myTrip = PTTrip(myDB, "16")
-string = "LINESTRING ("
-print myTrip.getShapelyLine()
-myTrip.cur.execute('SELECT * FROM intervals WHERE trip_id = "16"')
-print "Seconds, Point;"
-for i in myTrip.cur.fetchall():
-  print "%i, POINT (%.7f %.7f);" % (i[1], i[2], i[3])
-#for stop in myTrip.getStopsInSequence():
-  #print stop.getShapelyPoint()
-
-
-###############################################################
-################################ End ###########################################
-################################################################################
+if __name__ == '__main__':
+  ################################################################################
+  ########################## Testing Section #####################################
+  ################################################################################
+  
+  '''
+  ## Testing PTTrip.intervalByIntervalPosition -- building the animation database!
+  myDatabase = Database(myDB)
+  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
+  
+  interval=1 # Temporal resolution, in seconds
+  dur() # Initiate timer
+  
+  allTrips = myDatabase.getAllTrips(myDay)
+  dur('myDatabase.getAllTrips(myDay)') # How long did it take to get all trip objects for myDay?
+  
+  endtime = datetime.time(22, 30) # End time for processing
+  i = 1
+  
+  for trip in allTrips: # For all trips on myDay
+    current_time = datetime.datetime.now().time()
+    if trip.trip_id >= i and current_time < endtime: # Control start index, and end processing time -- get some sleep!
+      dur() # Re-initiate timer, once for each trip
+      myDatabase = Database(myDB)
+      myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
+      trip.intervalByIntervalPosition(myDay, interval=interval)
+      process="Trip=%s, i=%i, mode=%s myPTTrip.intervalByIntervalPosition(myDay, interval=%i)" % (trip.trip_id, i, trip.getMode().modetype, interval)
+      dur(process) # How long did it take to process the record?
+      myDB.commit() # Commit to database
+      i += 1 # Next index, in parallel with trip_id
+  
+  # When done, play some noise to let me know
+  import pygame
+  pygame.init()
+  pygame.mixer.init()
+  sound = pygame.mixer.Sound("test.wav")
+  for i in range(0,5):
+    sound.play()
+    time.sleep(1)
+  '''
+  
+  '''
+  ## Testing Day.plotModeSplit_NVD3
+  myDatabase = Database(myDB)
+  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
+  
+  myDay.plotModeSplit_NVD3(myDay, "Wellington")
+  '''
+  
+  '''
+  ## Testing Day.animateDay()
+  dur()
+  myDatabase = Database(myDB)
+  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
+  myDay.animateDay(0, 86399)
+  dur("myDay.animateDay(0, 86399)")
+  '''
+  
+  '''
+  ## Trying to fix the placement problem. See the QGIS file
+  myDatabase = Database(myDB)
+  myTrip = PTTrip(myDB, "16")
+  string = "LINESTRING ("
+  print myTrip.getShapelyLine()
+  myTrip.cur.execute('SELECT * FROM intervals WHERE trip_id = "16"')
+  print "Seconds, Point;"
+  for i in myTrip.cur.fetchall():
+    print "%i, POINT (%.7f %.7f);" % (i[1], i[2], i[3])
+  #for stop in myTrip.getStopsInSequence():
+    #print stop.getShapelyPoint()
+  '''
+  
+  myDatabase = Database(myDB)
+  myDay = Day(myDB, datetime.datetime(2013, 12, 8))
+  myDay.bokehFrequencyByMode(1*60, Show=True)
+  
+  ################################################################################
+  ################################ End ###########################################
+  ################################################################################
