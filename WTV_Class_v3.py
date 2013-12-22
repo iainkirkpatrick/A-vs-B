@@ -19,7 +19,7 @@
 #                         Day(Database)                       ::A date. PT runs by daily schedules, considering things like whether it is a weekday, etc::
 #                           > __init__(database, datetimeObj) ::<database> is a Database object. <datetimeObj> is a datetime object::
 #                           > getCanxServices()               :CAUTION:Returns a list of PTService objects that are cancelled according to the calendar_dates table. For Wellington I suspect this table is a little dodgy::
-#                           > getServices()                   :Returns a list of PTService objects that are scheduled to run on the day represented by datetimeObj. Currently set to ignore the information in the calendar_dates table::
+#                           > getServicesDay()                :Returns a list of service IDs of services that are scheduled to run on the day represented by datetimeObj. Currently set to ignore the information in the calendar_dates table::
 #                           > plotModeSplitNVD3(databaseObj, city) ::Uses the Python-NVD3 library to plot a pie chart showing the breakdown of vehicle modes (num. services) in Day. Useful to compare over time, weekday vs. weekend, etc. <city> is str, used in the title of the chart::
 #                           > animateDay()                    :Unfinished, but working:::
 #                           > countActiveTrips(second)        ::Returns an integer count of the number of trips of any mode that are operating at <second> on self::
@@ -58,7 +58,7 @@
 #                         PTTrip(Route)                       ::A PTTrip is a discrete trip made by single mode along a single route::
 #                           > __init__(database, trip_id)     ::<database> is a Database object. <trip_id> is an Integer identifying the trip uniquely. See the database::
 #                           > getRouteID()                    ::Returns the route_id (String) of the route that the trip follows. Used to construct the Route object which the Trip object inherits::
-#                           > doesTripRunOn(self, DayObj)     ::Returns a Boolean reporting whether the PTTtrip runs on <DayObj> or not. Considers the exceptions in calendar_dates before deciding, and handles >24h time::
+#                           > doesTripRunOn(DayObj)     ::Returns a Boolean reporting whether the PTTtrip runs on <DayObj> or not. Considers the exceptions in calendar_dates before deciding, and handles >24h time::
 #                           > getRoute()                      ::Returns the Route object representing the route taken on Trip::
 #                           > getService()                    ::Returns the PTService object that includes this trip::
 #                           > getShapelyLine()                ::Returns a Shapely Line object representing the shape of the trip::
@@ -79,15 +79,9 @@
 
 
 # Tasks for next iteration/s:
-#                > [COMPLETE] Comment existing code thoroughly and ensure that class structure is logical, abstract and modular.
 #                > KEEP CODE DOCUMENTED THROUGHOUT
-#                > Database method: return all stop objects
-#                > Work out how Git works and start using it for version control.
-#                > Continue building class structure and start working on some interesting statistical presentations.
-#                > Install Python-nvd3 at home
-#                > Develop methods for using Py-nvd3 within existing class structure
 #                > Develop the HTML and CSS for the website and embed the JavaScript graphs
-#                > Work on the visualisation of the network in real time (based on that guy...)
+#                > Work on the visualisation of the network in real time (based on work done by Chris McDowell...)
 #                > Work on the server//Django side of things to get an actual website!
 #                > Have the first version of the website up and running (one city)!
 #                > Expand to multiple cities
@@ -100,8 +94,8 @@
 #
 #
 # Created:            20131107
-# Last Updated:       20131108
-# Comments Updated:   20131110
+# Last Updated:       20131222
+# Comments Updated:   20131222
 #-------------------------------------------------------------------------------
 
 ################################################################################
@@ -134,16 +128,15 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
 
-#from bokeh.plotting import *
 import bokeh.plotting
 
 from shapely.geometry import Point, LineString
 
 import sqlite3 as dbapi
 db_str = "GTFSSQL_Wellington_20131208_215725.db" # Name of database
-##db_str = "GTFSSQL_Wellington_20131207_212134__SUBSET__.db"
-#db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB, change to necessary filepath
-db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB, change to necessary filepath
+##db_str = "GTFSSQL_Wellington_20131207_212134__SUBSET__.db" # Subset database, for rapid testing
+#db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB under Windows, change to necessary filepath
+db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
 myDB = dbapi.connect(db_pathstr) # Connect to DB
 myDB.text_factory = dbapi.OptimizedUnicode
 
@@ -252,8 +245,10 @@ class Database(object):
   
   def getSittingStops(self, second, dayObj):
     '''
-    Given a particular <second> (hh:mm:ss) in a <dayObj>, returns a list of the XY positions of any
+    Given a particular <second> (datetime.time) in a <dayObj>, returns a list of the XY positions of any
     public transport stops that any vehicle is currently sitting at.
+    
+    Example <second>: datetime.time(5, 6) = 05:06am
     '''
     hour, mins, secs, ssecs = str(second.hour), str(second.minute), str(second.second), str(second.microsecond)
     if len(hour) == 1:
@@ -266,15 +261,44 @@ class Database(object):
       ssecs = "00" + ssecs
     if len(ssecs) == 2:
       ssecs = "0" + ssecs
-
+      
     sittingstops = []
     q = Template('SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text FROM stop_times AS ST JOIN stops AS S ON ST. stop_id = S.stop_id WHERE arrival_time = "$second" OR departure_time = "$second" OR (arrival_time  < "$second" AND departure_time > "$second")')
     query = q.substitute(second = hour + ":" + mins + ":" + secs + "." + ssecs)
     self.cur.execute(query)
     for sittingstop in self.cur.fetchall():
-      if PTTrip(self.database, str(sittingstop[2])).doesRouteRunOn(dayObj): # If the route actually runs on the day 
+      if PTTrip(self.database, str(sittingstop[2])).doesTripRunOn(dayObj): # If the trip actually runs on the day being considered
         sittingstop = {"stop_lat":sittingstop[0], "stop_lon":sittingstop[1], "trip_id":sittingstop[2], "stop_id":sittingstop[3], "pickup_type_text":sittingstop[4], "drop_off_type_text":sittingstop[5]}
         sittingstops.append(sittingstop)
+    
+    # Now we may need to append some stops that weren't picked up the first time because they run beyond midnight
+    query = 'SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text, ST.arrival_time, ST.departure_time FROM stop_times AS ST JOIN stops AS S ON ST. stop_id = S.stop_id WHERE arrival_time LIKE "24%" OR arrival_time LIKE "25%" OR arrival_time LIKE "26%" OR arrival_time LIKE "27%" OR arrival_time LIKE "28%" OR arrival_time LIKE "29%" OR arrival_time LIKE "3%" OR departure_time LIKE "4%"'
+    self.cur.execute(query)
+    triplist = []
+    apresminuit = self.cur.fetchall()
+    for aftermidnightsittingstop in apresminuit:
+      if aftermidnightsittingstop[2] not in triplist:
+        triplist.append(aftermidnightsittingstop[2])
+    runs = {}
+    for trip in triplist:
+      runs[trip] = PTTrip(self.database, trip).doesTripRunOn(Day(self.database, dayObj.datetimeObj))
+    for aftermidnightsittingstop in apresminuit:
+      #if PTTrip(self.database, str(aftermidnightsittingstop[2])).doesTripRunOn(Day(self.database, dayObj.yesterdayObj)):
+      if runs[aftermidnightsittingstop[2]] == True:
+        newarrivaltime, newdeparturetime = datetime.time(int(aftermidnightsittingstop[6][0:2])-24, int(aftermidnightsittingstop[6][3:5]), int(aftermidnightsittingstop[6][6:8])), datetime.time(int(aftermidnightsittingstop[7][0:2])-24, int(aftermidnightsittingstop[7][3:5]), int(aftermidnightsittingstop[7][6:8]))
+        if second == newarrivaltime or second == newdeparturetime:
+          # Then the vehicle is stopped at either the arrivlal or departure time
+          sittingstop = {"stop_lat":aftermidnightsittingstop[0], "stop_lon":aftermidnightsittingstop[1], "trip_id":aftermidnightsittingstop[2], "stop_id":aftermidnightsittingstop[3], "pickup_type_text":aftermidnightsittingstop[4], "drop_off_type_text":aftermidnightsittingstop[5]}
+          print sittingstop
+          sittingstops.append(sittingstop)
+          print newarrivaltime, newdeparturetime, PTTrip(self.database, str(aftermidnightsittingstop[2])).getShortName()
+        elif second > newarrivaltime and second < newdeparturetime:
+          # Then the vehicle is stopped between the arrival and deparure times
+          sittingstop = {"stop_lat":aftermidnightsittingstop[0], "stop_lon":aftermidnightsittingstop[1], "trip_id":aftermidnightsittingstop[2], "stop_id":aftermidnightsittingstop[3], "pickup_type_text":aftermidnightsittingstop[4], "drop_off_type_text":aftermidnightsittingstop[5]}
+          print sittingstop
+          sittingstops.append(sittingstop)
+          print newarrivaltime, newdeparturetime, PTTrip(self.database, str(aftermidnightsittingstop[2])).getLongName()
+    
     return sittingstops
 
 class Day(Database):
@@ -300,7 +324,12 @@ class Day(Database):
 
     # Get the relative "tomorrow" (useful for methods checking if a service is offered on a given day, because it gives the upper limit)
     tomorrowObj = self.datetimeObj + datetime.timedelta(days=1)
-    self.tomorrow = tomorrowObj.isoformat(' ') # "2013-11-07 00:00:000"  
+    self.tomorrow = tomorrowObj.isoformat(' ') # "2013-11-07 00:00:000"
+    
+    # Get the relative "yesterday" (useful for methods checking post-midnight
+    yesterdayObj = self.datetimeObj - datetime.timedelta(days=1)
+    self.yesterdayISO = yesterdayObj.isoformat(' ')
+    self.yesterdayObj = yesterdayObj
 
   def getCanxServices(self):
     '''
@@ -316,20 +345,22 @@ class Day(Database):
       canxServices.append(PTService(self.database, service[0]))
     return canxServices
 
-  def getServices(self):
+  def getServicesDay(self):
     '''
-    Returns a list of PTService objects representing services that are running on self.day.
+    Returns a list of service IDs representing services that are running on self.day.
     Takes into account the day of the week, and the cancelled services on Day.**
 
     **No longer takes into account "cancelled" services, due to the unreliability of this information.
     The code that achieved this has been commented out within the function, rather than removed.
+    
+    Does not take into account services that go beyond midnight.
     '''
     # Fill template, including use of today's day of the week.
 
     # Old template, uses CD.date <> "$today2", which seemed to give wrong answer
     ##q = Template('SELECT DISTINCT C.service_id FROM calendar AS C LEFT OUTER JOIN calendar_dates AS CD ON CD.service_id = C.service_id WHERE C.start_Date <= "$today1" AND C.end_date >= "$tomorrow" AND C.$DayOfWeek = 1 AND CD.date <> "$today2"')
     ##query = q.substitute(today1 = self.isoDate[0:10], tomorrow = self.tomorrow[0:10], DayOfWeek = self.dayOfWeekStr, today2 = self.isoDate[0:10])
-
+    
     # New template
     q = Template('SELECT DISTINCT C.service_id FROM calendar AS C LEFT OUTER JOIN calendar_dates AS CD ON CD.service_id = C.service_id WHERE C.start_Date <= "$today1" AND C.end_date >= "$tomorrow" AND C.$DayOfWeek = 1')
     query = q.substitute(today1 = self.isoDate[0:10], tomorrow = self.tomorrow[0:10], DayOfWeek = self.dayOfWeekStr)    
@@ -340,6 +371,9 @@ class Day(Database):
     services = self.cur.fetchall()
     for service in services:
       gotServices.append(str(service[0]))
+    
+    
+      
     return gotServices
 
   def plotModeSplit_NVD3(self, databaseObj, city):
@@ -670,7 +704,7 @@ class Mode(Database):
     Has its own query.
     '''
     # Get service_id of services that are running on DayObj
-    services = DayObj.getServices()
+    services = DayObj.getServicesDay()
 
     # Distinct route/service pairs of the same modetype as self.Mode.
     q = Template('SELECT DISTINCT T.route_id, T.service_id FROM trips AS T JOIN routes AS R ON T.route_id = R.route_id WHERE R.route_type_desc = "$modetype"')
@@ -966,7 +1000,7 @@ class PTTrip(Route):
     protectMonday, protectTuesday, protectWednesday, protectThursday, protectFriday, protectSaturday, protectSunday = False, False, False, False, False, False, False
     
     if info[1] == 1:
-      Week["Monday"] == True
+      Week["Monday"] = True
       if minuit[1] == True:
         Week["Tuesday"] = True
         protectTuesday = True
@@ -978,7 +1012,7 @@ class PTTrip(Route):
       if minuit[1] == True:
         Week["Wednesday"] = True
         protectWednesday = True
-      if minuit[10] == True and protectTuesday == False:
+      if minuit[0] == True and protectTuesday == False:
         Week["Tuesday"] = False
     
     if info[3] == 1:
@@ -1625,11 +1659,12 @@ if __name__ == '__main__':
   
   ## Testing new doesModeRunOn()
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 9))
-  myTrip = PTTrip(myDB, "1086")
-  print myTrip.doesTripRunOn(myDay)
-  myTrip = PTTrip(myDB, "46")
-  print myTrip.doesTripRunOn(myDay)
+  myDay = Day(myDB, datetime.datetime(2013, 12, 8))
+
+  print len(myDay.getServicesDay()), myDay.getServicesDay() # Began
+  
+  sitting = myDatabase.getSittingStops(datetime.time(0, 0), myDay) # Done a lot, but hitting a wall. May need to change whole approach
+  print len(sitting), sitting
   
   ################################################################################
   ################################ End ###########################################
