@@ -58,7 +58,7 @@
 #                         PTTrip(Route)                       ::A PTTrip is a discrete trip made by single mode along a single route::
 #                           > __init__(database, trip_id)     ::<database> is a Database object. <trip_id> is an Integer identifying the trip uniquely. See the database::
 #                           > getRouteID()                    ::Returns the route_id (String) of the route that the trip follows. Used to construct the Route object which the Trip object inherits::
-#                           > doesTripRunOn(self, DayObj)     ::Returns a Boolean reporting whether the PTTtrip runs on <DayObj> or not. Considers the exceptions in calendar_dates before deciding::
+#                           > doesTripRunOn(self, DayObj)     ::Returns a Boolean reporting whether the PTTtrip runs on <DayObj> or not. Considers the exceptions in calendar_dates before deciding, and handles >24h time::
 #                           > getRoute()                      ::Returns the Route object representing the route taken on Trip::
 #                           > getService()                    ::Returns the PTService object that includes this trip::
 #                           > getShapelyLine()                ::Returns a Shapely Line object representing the shape of the trip::
@@ -239,6 +239,7 @@ class Database(object):
   def getAllTrips(self, DayObj):
     '''
     Given a particular <DayObj>, returns a list of PTTrip objects that run on that day.
+    Note: A trip that starts on one day and ends on the next will appear in both of those days.
     '''
     self.cur.execute('SELECT DISTINCT trip_id FROM trips')
 
@@ -924,37 +925,109 @@ class PTTrip(Route):
   
   def doesTripRunOn(self, DayObj):
     '''
-    Returns a Boolean to determine if the PTTrip runs on <DayObj>
-    <ignore> controls whether to ignore the calendar_dates table of the database
-    that controls additions and exceptions to timetabled trips on particular days.
+    Returns a Boolean to determine if the PTTrip runs on <DayObj>.
+    Note that this is NOT as simple as checking the GTFS calendar table: a trip can start before midnight and end the next day.
+    The typical database representation of this is to record such trips as being on the (say) Saturday but not the Sunday,
+    because the trip did not originate on Saturday.
+    I think this is wrong, so this code corrects it.
+    
+    THUS: A trip that starts on Saturday and ends on Sunday will return True for Saturday and for Sunday, even if the GTFS feed
+    only says it runs on the Saturday.
     '''
+    def checkIfAfterMidnight(self, DayObj):
+      '''Brief interior function that checks if self actually runs beyond midnight, and therefore runs for more than one day'''
+      q = Template('SELECT min(departure_time), max(departure_time) FROM stop_times WHERE trip_id = "$trip_id"')
+      query = q.substitute(trip_id = self.trip_id)
+      self.cur.execute(query)
+      result = self.cur.fetchall()
+      start, end = result[0][0], result[0][1]
+      if int(start[0:2]) >= 24 and int(end[0:2]) >= 24:
+        # '28:00:00.000' -->> 28
+        # Then the trip ends some time after midnight, and this needs to insure that True is returned when asked if the trip runs today.
+        return (True, True)
+      elif int(start[0:2]) < 24 and int(end[0:2]) >= 24:
+        # The trip starts before midnight and finishes after it
+        return (False, True)
+      elif int(start[0:2]) >= 24 and int(end[0:2]) < 24:
+        ## return (True, False)
+        raise CustomException("How can a trip start after midnight and finish before it?")
+      else:
+        # The trip does not end with a time beyond "23:59:59.999"
+        return (False, False)
+      
     q = Template('SELECT * FROM calendar WHERE service_id = "$service_id"')
     serviceid = self.getService().service_id
     query = q.substitute(service_id = serviceid)
     self.cur.execute(query)
     info = self.cur.fetchone()
     Week = {"Monday": False, "Tuesday": False, "Wednesday": False, "Thursday": False, "Friday": False, "Saturday": False, "Sunday": False}
+    
+    minuit = checkIfAfterMidnight(self, DayObj)
+    protectMonday, protectTuesday, protectWednesday, protectThursday, protectFriday, protectSaturday, protectSunday = False, False, False, False, False, False, False
+    
     if info[1] == 1:
       Week["Monday"] == True
+      if minuit[1] == True:
+        Week["Tuesday"] = True
+        protectTuesday = True
+      if minuit[0] == True and protectMonday == False:
+        Week["Monday"] = False
+    
     if info[2] == 1:
       Week["Tuesday"] = True
+      if minuit[1] == True:
+        Week["Wednesday"] = True
+        protectWednesday = True
+      if minuit[10] == True and protectTuesday == False:
+        Week["Tuesday"] = False
+    
     if info[3] == 1:
       Week["Wednesday"] = True
+      if minuit[1] == True:
+        Week["Thursday"] = True
+        protectThursday = True
+      if minuit[0] == True and protectWednesday == False:
+        Week["Wednesday"] = False
+
     if info[4] == 1:
       Week["Thursday"] = True
+      if minuit[1] == True:
+        Week["Friday"] = True
+        protectFriday = True
+      if minuit[0] == True and protectThursday == False:
+        Week["Thursday"] = False
+    
     if info[5] == 1:
       Week["Friday"] = True
+      if minuit[1] == True:
+        Week["Saturday"] = True
+        protectSaturday = True
+      if minuit[0] == True and protectFriday == False:
+        Week["Friday"] = False
+    
     if info[6] == 1:
       Week["Saturday"] = True
+      if minuit[1] == True:
+        Week["Sunday"] = True
+        protectSunday = True
+      if minuit[0] == True and protectSaturday == False:
+        Week["Saturday"] = False
+    
     if info[7] == 1:
       Week["Sunday"] = True
+      if minuit[1] == True:
+        Week["Monday"] = True
+        protectMonday = True
+      if minuit[0] == True and protectSunday == False:
+        Week["Sunday"] = False
+    
     DOW = DayObj.dayOfWeekStr.title()
     if Week[DOW] is True:
       # Then the trip does run on this day of the week, but we still need to check if there's an exception
       # for this particular day
       # Or, we could ignore exceptions for particular dates and just assume the full system is running
       # The latter is risky, as it can also ignore additional trips, and include things that run, say, monthly,
-      # not every week.
+      # not every week. Thus, this is not done.
       try:
         q = Template('SELECT * FROM calendar_dates WHERE service_id = "$service_id" and date = "$date"')
         tripdate = DayObj.isoDate + ".000"
@@ -983,6 +1056,17 @@ class PTTrip(Route):
         excdate, exctype = exception[1], exception[3]
         if excdate == tripdate and exctype == 'Added':
           return True
+      
+      ## One final check is whether the trip has a travel time that is stored beyond midnight (annoying quirk of the GTFS)
+      #if checkIfAfterMidnight(self, DayObj) == True:
+        ## Then the service runs in the early hours of a DayObj... but is it this DayObj?
+        #tomorrowDict = {"Monday": "Tuesday", "Tuesday": "Wednesday", "Wednesday": "Thursday", "Thursday": "Friday", "Friday": "Saturday", "Saturday": "Sunday", "Sunday": "Monday"}
+        ### DOW = DayObj.dayOfWeekStr.title()
+        #tomorrow = tomorrowDict[DOW]
+        #if Week[tomorrow] == True:
+          ## Then the service runs after midnight into "tomorrow": which is "today" when considering DayObj
+          #return True
+      
       # Once all relevant exceptions have been checked and no additions have been found,
       # we have confirmed that the trip does not run on <DayObj>
       return False
@@ -1231,6 +1315,7 @@ class PTTrip(Route):
     dropping off passengers at the moment in time (determine from the attributes of the stops it is between at a moment.
 
     Not sure what happens when asked to extend past midnight...
+    >> FIX THIS!
     
     NEW: Writes to the database, rather than returning the values in memory.
     Return only None, but writes to the database if this is appropriate.
@@ -1531,9 +1616,20 @@ if __name__ == '__main__':
     #print stop.getShapelyPoint()
   '''
   
+  '''
+  ## Testing bokehFrequencyByMode
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetime.datetime(2013, 12, 8))
   myDay.bokehFrequencyByMode(1*60, Show=True)
+  '''
+  
+  ## Testing new doesModeRunOn()
+  myDatabase = Database(myDB)
+  myDay = Day(myDB, datetime.datetime(2013, 12, 9))
+  myTrip = PTTrip(myDB, "1086")
+  print myTrip.doesTripRunOn(myDay)
+  myTrip = PTTrip(myDB, "46")
+  print myTrip.doesTripRunOn(myDay)
   
   ################################################################################
   ################################ End ###########################################
