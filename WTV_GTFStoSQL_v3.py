@@ -26,7 +26,7 @@
 ## thursday INTEGER
 ## friday INTEGER
 ## saturday INTEGER
-## sunday INTERGER
+## sunday INTEGER
 ## start_date DATETIME
 ## end_date DATETIME
 #
@@ -75,14 +75,52 @@
 ## drop_off_type INTEGER
 ## drop_off_type_text TEXT
 ## shape_dist_traveled FLOAT
-#
+
+#stop_times_amended
+## trip_id INTEGER REFERENCES trips(trip_id)
+## arrival_time DATETIME
+## departure_time DATETIME
+## monday INTEGER
+## tuesday INTEGER
+## wednesday INTEGER
+## thursday INTEGER
+## friday INTEGER
+## saturday INTEGER
+## sunday INTEGER
+## stop_id INTEGER REFERENCES stops(stop_id)
+## stop_sequence INTEGER
+## stop_headsign TEXT
+## pickup_type INTEGER
+## pickup_type_text TEXT
+## drop_off_type INTEGER
+## drop_off_type_text TEXT
+## shape_dist_traveled FLOAT
+
 # stops
 ## stop_id INTEGER
 ## stop_code INTEGER
 ## stop_name TEXT
 ## stop_desc TEXT
 ## stop_lat FLOAT
-## stop_lon FLOAT
+## stop_lon FLOAT#stop_times_amended
+## trip_id INTEGER REFERENCES trips(trip_id)
+## arrival_time DATETIME
+## departure_time DATETIME
+## monday INTEGER
+## tuesday INTEGER
+## wednesday INTEGER
+## thursday INTEGER
+## friday INTEGER
+## saturday INTEGER
+## sunday INTEGER
+## stop_id INTEGER REFERENCES stops(stop_id)
+## stop_sequence INTEGER
+## stop_headsign TEXT
+## pickup_type INTEGER
+## pickup_type_text TEXT
+## drop_off_type INTEGER
+## drop_off_type_text TEXT
+## shape_dist_traveled FLOAT
 ## zone_id TEXT
 ## stop_url TEXT
 ## location_type INTEGER
@@ -188,6 +226,9 @@ def createGTSFtoSQL_database(DBName_str):
 
   # Add a intervals table
   cur.execute('CREATE TABLE intervals(trip_id INTEGER REFERENCES trips(trip_id), date DATETIME, lat FLOAT, lon FLOAT, route_type_desc TEXT REFERENCES routes(route_type_desc), pickup_type_text TEXT REFERENCES stop_times(pickup_type_text), drop_off_type_text TEXT REFERENCES stop_times(drop_off_type_text), agency_id TEXT REFERENCES agency(agency_id), route_id TEXT REFERENCES routes(route_id), shape_id TEXT REFERENCES shapes(shape_id))')
+
+  # Add a stop_times_amended table that doesn't store time beyond 23:59:59.999 like the GTFS does
+  cur.execute('CREATE TABLE stop_times_amended(trip_id INTEGER REFERENCES trips(trip_id), service_id INTEGER REFERENCES trips(service_id), arrival_time DATETIME, departure_time DATETIME, monday INTEGER, tuesday INTEGER, wednesday INTEGER, thursday INTEGER, friday INTEGER, saturday INTEGER, sunday INTEGER, stop_id INTEGER REFERENCES stops(stop_id), stop_sequence INTEGER, stop_headsign TEXT, pickup_type INTEGER, pickup_type_text TEXT, drop_off_type INTEGER, drop_off_type_text TEXT, shape_dist_traveled FLOAT)')
 
   GTFSDB.commit()
 
@@ -689,7 +730,7 @@ def populateStops(GTFSLocation, database):
   stop_url > URL of a web page about that particular stop. Different from the feed_url, agency_url and route_url fields of other tables.
   location_type > Identifies whether this stop ID represents a stop or station. Default is that it is a stop. 0 or blank: stop (where passengers board or disembark). 1: station (structure or area that contains one or more stops).. OPTIONAL.
   location_type_text > DEFINED BY RICHARD LAW: Text correspondence of location_type ("Stop", "Station" or "Hail and Ride"). "Hail and Ride" is a custom option added by Richard, and is deemed to exist if the field has no other specification and the name of the stop contains the text "hail and ride". OPTIONAL.
-  parent_station > For stops that are physically located inside stations, the parent_station field identifies the station associated with the stop. To use this field, stops.txt must also contain a row where this stop ID is assigned location_type=1. Contains a stop_id if location_type=0 and the stop is INSIDE a station. Is 0 or blacnk if location_type=0 and the stop is not inside a station. Is 1 if it is a station. OPTIONAL. 
+  parent_station > For stops that are physically located inside stations, the parent_station field identifies the station associated with the stop. To use this field, stops.txt must also contain a row where this stop ID is assigned location_type=1. Contains a stop_id if location_type=0 and the stop is INSIDE a station. Is 0 or blacnk if location_type=0 and the stop is not inside a station. Is 1 if it is a station. OPTIONAL.
   stop_timezone > The timezone in which this stop or station is located. See: http://en.wikipedia.org/wiki/List_of_tz_zones. If omitted, the stop is assumed to be located in the timezone specified by agency_timezone in agency.txt. OPTIONAL.
   wheelchair_boarding > Identifies whether wheelchair boardings are possible from the specified stop or station. 0 or empty: there is no accessibility information for the stop. 1: there exists some accessible path from outside the station to the stop/platform. 2: there exists NO accessible path to the stop/platform.
   wheelchair_boarding_text > DEFINED BY RICHARD LAW: Text correspondence of wheelchair_boarding ("Unknown", "Accessible" or "Inaccessible"). OPTIONAL.
@@ -889,6 +930,110 @@ def populateStopTimes(GTFSLocation, database):
 
     return database
 
+def populateStopTimesAmended(database):
+  '''
+  Because the GTFS recommends that time be stored as post-23:59:59.999
+  when the trips originate before midnight (and even when it doesn't),
+  this table stores a corrected format of the stop_times table that has
+  no time that exceeds "23:59:59.999".
+  it manages this by including a series of columns (monday through sunday)
+  that mirror the calendar table. Thus a trip may start on Saturday att
+  2330pm and end at sunday at 0100m. This table records that more
+  sensibly than the GTFS default, which is to say the trip runs on
+  Saturday at 2330 and ends on Saturday at 2500.
+  '''
+  def calendarOffset(weekbinary):
+    '''
+    <weekbinary> is a list of the form [1,1,1,1,1,0,0] (example)
+    where the digits are binary indications of whether the trip runs on
+    a given day, where each number refers to the week MTWTFSS
+    '''
+    origmon, origtue, origwed, origthu, origfri, origsat, origsun = weekbinary[0], weekbinary[1],weekbinary[2], weekbinary[3], weekbinary[4], weekbinary[5], weekbinary[6]
+    return [origsun, origmon, origtue, origwed, origthu, origfri, origsat]
+
+  def maxBinary(week1, week2):
+    week = []
+    i = 0
+    for day in week1:
+      week.append(max(day, week2[i]))
+      i+=1
+    return week
+
+  cur = database.cursor()
+
+  # Build a concordance from trip_id to service_id
+  cur.execute('SELECT trip_id, service_id FROM trips')
+  trip_service = {}
+  for tripserv in cur.fetchall():
+    trip_id, service_id = tripserv[0], tripserv[1]
+    trip_service[trip_id] = service_id
+
+  # Build a concordance from service_id to day of the week
+  cur.execute('SELECT service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday FROM calendar')
+  servday = {}
+  for servcal in cur.fetchall():
+    service_id = servcal[0]
+    monday, tuesday, wednesday, thursday, friday, saturday, sunday = servcal[1], servcal[2], servcal[3], servcal[4], servcal[5], servcal[6], servcal[7]
+    servday[service_id] = [int(monday), int(tuesday), int(wednesday), int(thursday), int(friday), int(saturday), int(sunday)]
+
+  # Copy the rows of calendar into stop_times_amended
+  # For each stop in a trip (record of stop_times), check if it is after midnight
+  cur.execute('SELECT * FROM stop_times')
+  for stoppedtrip in cur.fetchall():
+    trip_id = stoppedtrip[0]
+    arrival_time = stoppedtrip[1]
+    departure_time = departure_time = stoppedtrip[2]
+    stop_id = stoppedtrip[3]
+    stop_sequence = stoppedtrip[4]
+    stop_headsign = stoppedtrip[5]
+    pickup_type = stoppedtrip[6]
+    pickup_type_text = stoppedtrip[7]
+    drop_off_type = stoppedtrip[8]
+    drop_off_type_text = stoppedtrip[9]
+    shape_dist_traveled = stoppedtrip[10]
+
+    service_id = trip_service[trip_id]
+    week = servday[service_id]
+
+    arriveafter, departafter = False, False
+    if int(arrival_time[0:2]) >= 24:
+      # Then the trip arrives at the stop after or at midnight
+      newarrivaltime = int(arrival_time[0:2])-24
+      arrival_time = str(newarrivaltime) + arrival_time[2:]
+      # Offset the calendar by one day
+      week_arrive = calendarOffset(week)
+      arriveafter = True
+
+    if int(departure_time[0:2]) >= 24:
+      newdeparturetime = int(departure_time[0:2])-24
+      departure_time = str(newdeparturetime) + departure_time[2:]
+      # Offset the calendar by one day
+      week_depart = calendarOffset(week)
+      departafter = True
+
+    if arriveafter == False and departafter == True:
+      # Then the trip arrives at a stop, dwells, and then departs
+      # and the clock ticks over midnight during the dwell
+      # The calendar needs to reflect this
+      # I made maxBinary to do something about this, but I don't like it
+      ## week = maxBinary[week_arrive, week_depart]
+      raise AttributeError
+
+    elif arriveafter == True and departafter == False:
+      # This is impossible
+      raise AttributeError
+
+    elif arriveafter == True and departafter == True:
+      if week_arrive == week_depart:
+        # If they're equal, just take the arrive one as authoritative
+        week = week_arrive
+      else:
+        raise Exception
+
+    cur.execute('INSERT INTO stop_times_amended VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (trip_id, service_id, arrival_time, departure_time, week[0], week[1], week[2], week[3], week[4], week[5], week[6], stop_id, stop_sequence, stop_headsign, pickup_type, pickup_type_text, drop_off_type, drop_off_type_text, shape_dist_traveled))
+
+  database.commit()
+
 ################################################################################
 ############################### Script #########################################
 ################################################################################
@@ -945,6 +1090,9 @@ if writeDB == True:
 
   # Stop times (20131106)
   populateStopTimes(GTFSLocation, GTFSDB)
+
+  # Amended stop times (20131224)
+  populateStopTimesAmended(GTFSDB)
 
   print "Database written: " + db_str + " (" + db_pathstr + ")"
 
