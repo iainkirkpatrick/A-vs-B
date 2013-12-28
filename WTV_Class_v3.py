@@ -382,17 +382,12 @@ class Day(Database):
       else:
         raise Exception
         
-    gotServices = []
-    for service in regularservices:
-       if service not in removed:
-         # If the service has not been removed
-        gotServices.append(str(service))
+    # Only keep those services that have not been removed
+    gotServices = [str(x) for x in regularservices if x not in removed]
     
-    for service in added:
-      if service not in gotServices:
-        # If there is an additional service not already captured
-        gotServices.append(service)
-      
+    # Add those services that have been added
+    gotServices = list(set(gotServices + added))
+    
     return gotServices
 
   def plotModeSplit_NVD3(self, databaseObj, city):
@@ -473,42 +468,20 @@ class Day(Database):
         newsecond
       except NameError:
         newsecond = datetime.time(hours, mins, secs)
-
     else:
       newsecond = second
       
     # Use newsecond to get all of the trips that operate at <second>
-    newsecond1 = str(newsecond.hour*3600 + newsecond.minute*60 + newsecond.second)
-    query = 'SELECT DISTINCT trip_id FROM intervals WHERE date = "%s"' % newsecond1 # Dont change this without referring to self.countActiveTripsByMode first
+    newsecond = str(newsecond.hour*3600 + newsecond.minute*60 + newsecond.second)
+    query = 'SELECT DISTINCT trip_id FROM intervals WHERE date = "%s"' % newsecond # Dont change this without referring to self.countActiveTripsByMode first
     self.cur.execute(query)
     nominallyrunning = self.cur.fetchall()
     
-    # Check if these trips operate on self (Day); ignore those that don't.
-    todaystripobjs, todaystrips, testtrips = self.getAllTrips(), [], []
-    for trip in todaystripobjs:
-      todaystrips.append(trip.trip_id)
-    for trip_id in nominallyrunning:
-      testtrips.append(trip_id[0])
-      
-    tripsnow, tripsnowobjs = list(set(todaystrips).intersection(set(testtrips))), []
-    for trip in tripsnow:
-      tripsnowobjs.append(PTTrip(self.database, str(trip)))
-    return tripsnowobjs
-        
-    #print i
-        
-    ## Use newsecond to get a count of the number of vehicles operating at <second> on self (Day)
-    ## 1. convert newsecond to pure seconds
-    #newsecond2 = str(newsecond.hour*3600 + newsecond.minute*60 + newsecond.second)
-    ## 2. make and execute ths SQL statement
-    #q = 'SELECT COUNT(DISTINCT trip_id) FROM intervals WHERE date = "%s"' % newsecond2 # Dont change this without referring to self.countActiveTripsByMode first
-    #self.cur.execute(q)
-    
-    ## internalCall is used by self.countActiveTripsByMode
-    #if internalCall == False:
-      #return self.cur.fetchone()[0]
-    #else:
-      #return q
+    todaystrips = [trip.trip_id for trip in self.getAllTrips()] # Trips that are actually running on self (Day)
+    testtrips = [trip_id[0] for trip_id in nominallyrunning] # Trips that have a vehicle at operation at <second> on whatever Day they run
+ 
+    # Return trips that run at <second> AND run on self (Day), as a list of PTTrip objects
+    return [PTTrip(self.database, str(trip)) for trip in list(set(todaystrips).intersection(set(testtrips)))]
   
   def countActiveTrips(self, second):
     '''
@@ -1565,6 +1538,7 @@ class PTTrip(Route):
           for position in trip_summary["Position"]:
             if position[0] < 86400:
               # i.e., before midnight, not after it or on it
+              # FIXME: Midnight bug in PTTrip.intervalByIntervalPosition
               self.cur.execute('INSERT INTO intervals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (trip_summary["TripID"], position[0], position[1][0], position[1][1], trip_summary["Modetype"], None, None, trip_summary["Operator"], trip_summary["RouteID"], trip_summary["ShapeID"]))
           self.database.commit()
         return None
@@ -1752,9 +1726,7 @@ if __name__ == '__main__':
   ## Testing for addressing post-midnight bug with relevant methods
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetime.datetime(2013, 12, 8)) # (2013, 12, 8)
-
-  print myDay.countActiveTrips(datetime.time(02, 01, 30)), myDay.countActiveTripsByMode(datetime.time(02, 01, 30))
-  
+  print myDay.countActiveTrips(datetime.time(0,7)), myDay.countActiveTripsByMode(datetime.time(0,7))
   print ""
   print ""
   ################################################################################
