@@ -999,6 +999,9 @@ def populateStopTimesAmended(database):
     if int(arrival_time[0:2]) >= 24:
       # Then the trip arrives at the stop after or at midnight
       newarrivaltime = int(arrival_time[0:2])-24
+      if len(str(newarrivaltime)) == 1:
+		# Then append a 0
+		newarrivaltime = "0" + str(newarrivaltime)
       arrival_time = str(newarrivaltime) + arrival_time[2:]
       # Offset the calendar by one day
       week_arrive = calendarOffset(week)
@@ -1006,6 +1009,9 @@ def populateStopTimesAmended(database):
 
     if int(departure_time[0:2]) >= 24:
       newdeparturetime = int(departure_time[0:2])-24
+      if len(str(newdeparturetime)) == 1:
+		# Then append a 0
+		newdeparturetime = "0" + str(newdeparturetime)
       departure_time = str(newdeparturetime) + departure_time[2:]
       # Offset the calendar by one day
       week_depart = calendarOffset(week)
@@ -1042,7 +1048,7 @@ def populateStopTimesAmended(database):
 import sqlite3 as dbapi
 
 # Write a new database?
-writeDB = True
+writeDB = False
 
 # Time is used to name your DB to avoid overwrites
 import time
@@ -1093,12 +1099,25 @@ if writeDB == True:
 
   # Amended stop times (20131224)
   populateStopTimesAmended(GTFSDB)
+  
+  print "TODO Note: Intervals table is not populated by this script."
 
   print "Database written: " + db_str + " (" + db_pathstr + ")"
 
 else:
 
   print "No database written."
+
+
+## Quick update to an existing table
+#GTFSDB = dbapi.connect("/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/GTFSSQL_Wellington_20131208_215725.db") # Connect/create DB
+#cur = GTFSDB.cursor() # Create cursor in DB
+#GTFSDB.text_factory = dbapi.OptimizedUnicode
+## add table
+#cur.execute('CREATE TABLE stop_times_amended(trip_id INTEGER REFERENCES trips(trip_id), service_id INTEGER REFERENCES trips(service_id), arrival_time DATETIME, departure_time DATETIME, monday INTEGER, tuesday INTEGER, wednesday INTEGER, thursday INTEGER, friday INTEGER, saturday INTEGER, sunday INTEGER, stop_id INTEGER REFERENCES stops(stop_id), stop_sequence INTEGER, stop_headsign TEXT, pickup_type INTEGER, pickup_type_text TEXT, drop_off_type INTEGER, drop_off_type_text TEXT, shape_dist_traveled FLOAT)')
+## populate table
+#populateStopTimesAmended(GTFSDB)
+#print "Populated stops_times_amended table for existing table."
 
 ################################################################################
 ################################ End ###########################################
