@@ -127,6 +127,7 @@ import datetime
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import matplotlib
 import numpy as np
 
 import bokeh.plotting
@@ -246,10 +247,17 @@ class Database(object):
 
   def getSittingStops(self, second, dayObj):
     '''
-    Given a particular <second> (datetime.time) in a <dayObj>, returns a list of the XY positions of any
-    public transport stops that any vehicle is currently sitting at.
+    Given a particular <second> (datetime.time) in a <dayObj>, returns a
+    list of the XY positions of any public transport stops that any
+    vehicle is currently sitting at (refers to trips).
+    
+    Nothing is returned for vehicles that are between stops: this is for
+    stopped vehicles only.
+    
+    Correctly accounts for services that go over midnight
 
     Example <second>: datetime.time(5, 6) = 05:06am
+    <dayObj> is a Day object.
     '''
     hour, mins, secs, ssecs = str(second.hour), str(second.minute), str(second.second), str(second.microsecond)
     if len(hour) == 1:
@@ -262,46 +270,36 @@ class Database(object):
       ssecs = "00" + ssecs
     if len(ssecs) == 2:
       ssecs = "0" + ssecs
-
-    sittingstops = []
-    q = Template('SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text FROM stop_times AS ST JOIN stops AS S ON ST. stop_id = S.stop_id WHERE arrival_time = "$second" OR departure_time = "$second" OR (arrival_time  < "$second" AND departure_time > "$second")')
+    
+    shortlist, sittingstops, captured = [], [], []
+    q = Template('SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text FROM stop_times_amended AS ST JOIN stops AS S ON ST.stop_id = S.stop_id WHERE arrival_time = "$second" OR departure_time = "$second" OR (arrival_time < "$second" AND departure_time > "$second")')
     query = q.substitute(second = hour + ":" + mins + ":" + secs + "." + ssecs)
+    print query
     self.cur.execute(query)
     for sittingstop in self.cur.fetchall():
+      if sittingstop[2] not in captured: # Ensures unique trip_ids
+        captured.append(sittingstop[2])
+        shortlist.append(sittingstop)
+        
+    # Need an additional query in case a stop dwells over the midnight break; checks the old stop_times table (not stop_times_amended)
+    # This advances <second> by 24 hours so that it is a post-midnight check.
+    q = Template('SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text FROM stop_times AS ST JOIN stops AS S ON ST.stop_id = S.stop_id WHERE arrival_time < "$second24" AND departure_time > "$second24"')
+    second24 = str(int(hour) + 24) + ":" + mins + ":" + secs + "." + ssecs
+    query = q.substitute(second = hour + ":" + mins + ":" + secs + "." + ssecs, second24 = second24)
+    print query
+    self.cur.execute(query)
+    for sittingstop in self.cur.fetchall():
+      if sittingstop[2] not in captured: # Ensures unique trip_ids
+        captured.append(sittingstop[2])
+        shortlist.append(sittingstop)
+        
+    for sittingstop in shortlist:
       if PTTrip(self.database, str(sittingstop[2])).doesTripRunOn(dayObj): # If the trip actually runs on the day being considered
         sittingstop = {"stop_lat":sittingstop[0], "stop_lon":sittingstop[1], "trip_id":sittingstop[2], "stop_id":sittingstop[3], "pickup_type_text":sittingstop[4], "drop_off_type_text":sittingstop[5]}
         sittingstops.append(sittingstop)
-
-    # Now we may need to append some stops that weren't picked up the first time because they run beyond midnight
-    query = 'SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text, ST.arrival_time, ST.departure_time FROM stop_times AS ST JOIN stops AS S ON ST. stop_id = S.stop_id WHERE arrival_time LIKE "24%" OR arrival_time LIKE "25%" OR arrival_time LIKE "26%" OR arrival_time LIKE "27%" OR arrival_time LIKE "28%" OR arrival_time LIKE "29%" OR arrival_time LIKE "3%" OR departure_time LIKE "4%"'
-    self.cur.execute(query)
-    triplist = []
-    apresminuit = self.cur.fetchall()
-    for aftermidnightsittingstop in apresminuit:
-      if aftermidnightsittingstop[2] not in triplist:
-        triplist.append(aftermidnightsittingstop[2])
-    runs = {}
-    for trip in triplist:
-      runs[trip] = PTTrip(self.database, trip).doesTripRunOn(Day(self.database, dayObj.datetimeObj))
-    for aftermidnightsittingstop in apresminuit:
-      #if PTTrip(self.database, str(aftermidnightsittingstop[2])).doesTripRunOn(Day(self.database, dayObj.yesterdayObj)):
-      if runs[aftermidnightsittingstop[2]] == True:
-        newarrivaltime, newdeparturetime = datetime.time(int(aftermidnightsittingstop[6][0:2])-24, int(aftermidnightsittingstop[6][3:5]), int(aftermidnightsittingstop[6][6:8])), datetime.time(int(aftermidnightsittingstop[7][0:2])-24, int(aftermidnightsittingstop[7][3:5]), int(aftermidnightsittingstop[7][6:8]))
-        if second == newarrivaltime or second == newdeparturetime:
-          # Then the vehicle is stopped at either the arrivlal or departure time
-          sittingstop = {"stop_lat":aftermidnightsittingstop[0], "stop_lon":aftermidnightsittingstop[1], "trip_id":aftermidnightsittingstop[2], "stop_id":aftermidnightsittingstop[3], "pickup_type_text":aftermidnightsittingstop[4], "drop_off_type_text":aftermidnightsittingstop[5]}
-          print sittingstop
-          sittingstops.append(sittingstop)
-          print newarrivaltime, newdeparturetime, PTTrip(self.database, str(aftermidnightsittingstop[2])).getShortName()
-        elif second > newarrivaltime and second < newdeparturetime:
-          # Then the vehicle is stopped between the arrival and deparure times
-          sittingstop = {"stop_lat":aftermidnightsittingstop[0], "stop_lon":aftermidnightsittingstop[1], "trip_id":aftermidnightsittingstop[2], "stop_id":aftermidnightsittingstop[3], "pickup_type_text":aftermidnightsittingstop[4], "drop_off_type_text":aftermidnightsittingstop[5]}
-          print sittingstop
-          sittingstops.append(sittingstop)
-          print newarrivaltime, newdeparturetime, PTTrip(self.database, str(aftermidnightsittingstop[2])).getLongName()
-
+        
     return sittingstops
-
+    
 class Day(Database):
   '''
   A date. PT runs by daily schedules, considering things like whether it is a weekday, etc.
@@ -581,8 +579,6 @@ class Day(Database):
     3. Get the next XYs
     4. But do the above with basemap
     '''
-    from matplotlib import pyplot as plt
-    import matplotlib
     matplotlib.rcParams['backend'] = "Qt4Agg"
     from mpl_toolkits.basemap import Basemap
     from shapely.geometry import Polygon
@@ -1664,9 +1660,11 @@ if __name__ == '__main__':
 
   print len(myDay.getServicesDay()), myDay.getServicesDay() # Began
 
-  sitting = myDatabase.getSittingStops(datetime.time(0, 0), myDay) # Done a lot, but hitting a wall. May need to change whole approach
+  sitting = myDatabase.getSittingStops(datetime.time(0, 5), myDay) # Done a lot, but hitting a wall. May need to change whole approach
   print len(sitting), sitting
-
+  
+  print ""
+  print ""
   ################################################################################
   ################################ End ###########################################
   ################################################################################
