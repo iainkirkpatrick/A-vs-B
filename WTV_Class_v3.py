@@ -244,61 +244,6 @@ class Database(object):
       if pttrip.doesTripRunOn(DayObj):
         trips.append(pttrip)
     return trips
-
-  def getSittingStops(self, second, dayObj):
-    '''
-    Given a particular <second> (datetime.time) in a <dayObj>, returns a
-    list of the XY positions of any public transport stops that any
-    vehicle is currently sitting at (refers to trips).
-    
-    Nothing is returned for vehicles that are between stops: this is for
-    stopped vehicles only.
-    
-    Correctly accounts for services that go over midnight
-
-    Example <second>: datetime.time(5, 6) = 05:06am
-    <dayObj> is a Day object.
-    '''
-    hour, mins, secs, ssecs = str(second.hour), str(second.minute), str(second.second), str(second.microsecond)
-    if len(hour) == 1:
-      hour = "0" + hour
-    if len(mins) == 1:
-      mins = "0" + mins
-    if len(secs) == 1:
-      secs = "0" + secs
-    if len(ssecs) == 1:
-      ssecs = "00" + ssecs
-    if len(ssecs) == 2:
-      ssecs = "0" + ssecs
-    
-    shortlist, sittingstops, captured = [], [], []
-    q = Template('SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text FROM stop_times_amended AS ST JOIN stops AS S ON ST.stop_id = S.stop_id WHERE arrival_time = "$second" OR departure_time = "$second" OR (arrival_time < "$second" AND departure_time > "$second")')
-    query = q.substitute(second = hour + ":" + mins + ":" + secs + "." + ssecs)
-    print query
-    self.cur.execute(query)
-    for sittingstop in self.cur.fetchall():
-      if sittingstop[2] not in captured: # Ensures unique trip_ids
-        captured.append(sittingstop[2])
-        shortlist.append(sittingstop)
-        
-    # Need an additional query in case a stop dwells over the midnight break; checks the old stop_times table (not stop_times_amended)
-    # This advances <second> by 24 hours so that it is a post-midnight check.
-    q = Template('SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text FROM stop_times AS ST JOIN stops AS S ON ST.stop_id = S.stop_id WHERE arrival_time < "$second24" AND departure_time > "$second24"')
-    second24 = str(int(hour) + 24) + ":" + mins + ":" + secs + "." + ssecs
-    query = q.substitute(second = hour + ":" + mins + ":" + secs + "." + ssecs, second24 = second24)
-    print query
-    self.cur.execute(query)
-    for sittingstop in self.cur.fetchall():
-      if sittingstop[2] not in captured: # Ensures unique trip_ids
-        captured.append(sittingstop[2])
-        shortlist.append(sittingstop)
-        
-    for sittingstop in shortlist:
-      if PTTrip(self.database, str(sittingstop[2])).doesTripRunOn(dayObj): # If the trip actually runs on the day being considered
-        sittingstop = {"stop_lat":sittingstop[0], "stop_lon":sittingstop[1], "trip_id":sittingstop[2], "stop_id":sittingstop[3], "pickup_type_text":sittingstop[4], "drop_off_type_text":sittingstop[5]}
-        sittingstops.append(sittingstop)
-        
-    return sittingstops
     
 class Day(Database):
   '''
@@ -329,6 +274,59 @@ class Day(Database):
     yesterdayObj = self.datetimeObj - datetime.timedelta(days=1)
     self.yesterdayISO = yesterdayObj.isoformat(' ')
     self.yesterdayObj = yesterdayObj
+    
+  def getSittingStops(self, second):
+    '''
+    Given a particular <second> (datetime.time) in a <dayObj>, returns a
+    list of the XY positions of any public transport stops that any
+    vehicle is currently sitting at (refers to trips).
+    
+    Nothing is returned for vehicles that are between stops: this is for
+    stopped vehicles only.
+    
+    Correctly accounts for services that go over midnight
+
+    Example <second>: datetime.time(5, 6) = 05:06am
+    <dayObj> is a Day object.
+    '''
+    hour, mins, secs, ssecs = str(second.hour), str(second.minute), str(second.second), str(second.microsecond)
+    if len(hour) == 1:
+      hour = "0" + hour
+    if len(mins) == 1:
+      mins = "0" + mins
+    if len(secs) == 1:
+      secs = "0" + secs
+    if len(ssecs) == 1:
+      ssecs = "00" + ssecs
+    if len(ssecs) == 2:
+      ssecs = "0" + ssecs
+    
+    shortlist, sittingstops, captured = [], [], []
+    q = Template('SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text FROM stop_times_amended AS ST JOIN stops AS S ON ST.stop_id = S.stop_id WHERE arrival_time = "$second" OR departure_time = "$second" OR (arrival_time < "$second" AND departure_time > "$second")')
+    query = q.substitute(second = hour + ":" + mins + ":" + secs + "." + ssecs)
+    self.cur.execute(query)
+    for sittingstop in self.cur.fetchall():
+      if sittingstop[2] not in captured: # Ensures unique trip_ids
+        captured.append(sittingstop[2])
+        shortlist.append(sittingstop)
+        
+    # Need an additional query in case a stop dwells over the midnight break; checks the old stop_times table (not stop_times_amended)
+    # This advances <second> by 24 hours so that it is a post-midnight check.
+    q = Template('SELECT S.stop_lat, S.stop_lon, ST.trip_id, ST.stop_id, ST.pickup_type_text, ST.drop_off_type_text FROM stop_times AS ST JOIN stops AS S ON ST.stop_id = S.stop_id WHERE arrival_time < "$second24" AND departure_time > "$second24"')
+    second24 = str(int(hour) + 24) + ":" + mins + ":" + secs + "." + ssecs
+    query = q.substitute(second = hour + ":" + mins + ":" + secs + "." + ssecs, second24 = second24)
+    self.cur.execute(query)
+    for sittingstop in self.cur.fetchall():
+      if sittingstop[2] not in captured: # Ensures unique trip_ids
+        captured.append(sittingstop[2])
+        shortlist.append(sittingstop)
+        
+    for sittingstop in shortlist:
+      if PTTrip(self.database, str(sittingstop[2])).doesTripRunOn(self): # If the trip actually runs on the day being considered
+        sittingstop = {"stop_lat":sittingstop[0], "stop_lon":sittingstop[1], "trip_id":sittingstop[2], "stop_id":sittingstop[3], "pickup_type_text":sittingstop[4], "drop_off_type_text":sittingstop[5]}
+        sittingstops.append(sittingstop)
+        
+    return sittingstops
 
   def getCanxServices(self):
     '''
@@ -1660,9 +1658,9 @@ if __name__ == '__main__':
 
   print len(myDay.getServicesDay()), myDay.getServicesDay() # Began
 
-  sitting = myDatabase.getSittingStops(datetime.time(0, 5), myDay) # Done a lot, but hitting a wall. May need to change whole approach
+  sitting = myDay.getSittingStops(datetime.time(0, 5)) # Done a lot, but hitting a wall. May need to change whole approach
   print len(sitting), sitting
-  
+    
   print ""
   print ""
   ################################################################################
