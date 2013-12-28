@@ -13,8 +13,6 @@
 #                           > feedDateRange()                 ::Returns a tuple of two datetime objects, representing [0] the start date of the feed and [1] the end date of the feed::
 #                           > getAllModes()                   ::Returns a list of Mode objects, one for each type of route_type_desc in the GTFS (routes table)::
 #                           > getAgencies()                   ::Returns cur.fetchall() of the agency table::
-#                           > getAllTrips(DayObj)             ::Returns a list of PTTrip objects representing those trips that run at least once on <DayObj>::
-#                           > getSittingStops(second, DayObj) ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>::
 #                           > checkTableEmpty(tableName="intervals") :: Checks if <tableName> (str) has any rows; returns Boolean to that effect::
 
 #                         Day(Database)                       ::A date. PT runs by daily schedules, considering things like whether it is a weekday, etc::
@@ -26,6 +24,8 @@
 #                           > countActiveTrips(second)        ::Returns an integer count of the number of trips of any mode that are operating at <second> on self::
 #                           > countActiveTripsByMode(second)  ::Returns an dictionary of {mode: integer} pairs similar to self.countActiveTrips(<second>) that breaks it down by mode::
 #                           > bokehFrequencyByMode(n, Show=False, name="frequency.py", title="frequency.py", graphTitle="Wellington Public Transport Services, ")  ::Returns an HTML graph of the number of active service every <n> seconds, on the second, broken down by mode::
+#                           > getSittingStops(second)         ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>. Correctly handles post-midnight services.::
+#                           > getAllTrips()                   ::Returns a list of PTTrip objects representing those trips that run at least once on self (Day). Accounts for midnight bug correctly.::
 
 #                         Mode(Database)                      ::A vehicle class, like "Bus", "Rail", "Ferry" and "Cable Car"::
 #                           > __init__(database, modetype)    ::<database> is a Database object. <modetype> is a string (as above) of the mode of interest::
@@ -231,20 +231,6 @@ class Database(object):
     self.cur.execute('SELECT * FROM agency')
     return self.cur.fetchall()
 
-  def getAllTrips(self, DayObj):
-    '''
-    Given a particular <DayObj>, returns a list of PTTrip objects that run on that day.
-    Note: A trip that starts on one day and ends on the next will appear in both of those days.
-    '''
-    self.cur.execute('SELECT DISTINCT trip_id FROM trips')
-
-    trips = []
-    for trip in self.cur.fetchall():
-      pttrip = PTTrip(self.database, trip[0])
-      if pttrip.doesTripRunOn(DayObj):
-        trips.append(pttrip)
-    return trips
-    
 class Day(Database):
   '''
   A date. PT runs by daily schedules, considering things like whether it is a weekday, etc.
@@ -341,6 +327,26 @@ class Day(Database):
     for service in self.cur.fetchall():
       canxServices.append(PTService(self.database, service[0]))
     return canxServices
+    
+  def getAllTrips(self):
+    '''
+    Given a particular DayObj (<self>), returns a list of PTTrip objects that
+    run on that day.
+    
+    Note: A trip that starts on one day and ends on the next will be
+    returned in both of those days, so bear this in mind if you use this
+    method to count the number of services in a day.
+    '''
+    q = Template('SELECT DISTINCT trip_id FROM stop_times_amended WHERE $daylabel = "1"')
+    query = q.substitute(daylabel = self.dayOfWeekStr)
+    self.cur.execute(query)
+    
+    trips = []
+    for trip in self.cur.fetchall():
+      pttrip = PTTrip(self.database, trip[0])
+      if pttrip.doesTripRunOn(self):
+        trips.append(pttrip)
+    return trips
 
   def getServicesDay(self):
     '''
@@ -1586,8 +1592,8 @@ if __name__ == '__main__':
   interval=1 # Temporal resolution, in seconds
   dur() # Initiate timer
 
-  allTrips = myDatabase.getAllTrips(myDay)
-  dur('myDatabase.getAllTrips(myDay)') # How long did it take to get all trip objects for myDay?
+  allTrips = myDay.getAllTrips()
+  dur('myDay.getAllTrips()') # How long did it take to get all trip objects for myDay?
 
   endtime = datetime.time(22, 30) # End time for processing
   i = 1
@@ -1658,8 +1664,7 @@ if __name__ == '__main__':
 
   print len(myDay.getServicesDay()), myDay.getServicesDay() # Began
 
-  sitting = myDay.getSittingStops(datetime.time(0, 5)) # Done a lot, but hitting a wall. May need to change whole approach
-  print len(sitting), sitting
+  print myDay.getAllTrips() # FIXME
     
   print ""
   print ""
