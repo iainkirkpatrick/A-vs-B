@@ -18,14 +18,14 @@
 #                         Day(Database)                       ::A date. PT runs by daily schedules, considering things like whether it is a weekday, etc::
 #                           > __init__(database, datetimeObj) ::<database> is a Database object. <datetimeObj> is a datetime object::
 #                           > getCanxServices()               :CAUTION:Returns a list of PTService objects that are cancelled according to the calendar_dates table. For Wellington I suspect this table is a little dodgy::
-#                           > getServicesDay()                :Returns a list of service IDs of services that are scheduled to run on the day represented by datetimeObj. Currently set to ignore the information in the calendar_dates table::
+#                           > getServicesDay()                ::Returns a list of service IDs of services that are scheduled to run on self (Day). Accounts for exceptional additions and removals of services; but not the midnight bug, as a PTService is not a PTTrip::
 #                           > plotModeSplitNVD3(databaseObj, city) ::Uses the Python-NVD3 library to plot a pie chart showing the breakdown of vehicle modes (num. services) in Day. Useful to compare over time, weekday vs. weekend, etc. <city> is str, used in the title of the chart::
 #                           > animateDay()                    :Unfinished, but working:::
 #                           > countActiveTrips(second)        ::Returns an integer count of the number of trips of any mode that are operating at <second> on self::
 #                           > countActiveTripsByMode(second)  ::Returns an dictionary of {mode: integer} pairs similar to self.countActiveTrips(<second>) that breaks it down by mode::
 #                           > bokehFrequencyByMode(n, Show=False, name="frequency.py", title="frequency.py", graphTitle="Wellington Public Transport Services, ")  ::Returns an HTML graph of the number of active service every <n> seconds, on the second, broken down by mode::
-#                           > getSittingStops(second)         ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>. Correctly handles post-midnight services.::
-#                           > getAllTrips()                   ::Returns a list of PTTrip objects representing those trips that run at least once on self (Day). Accounts for midnight bug correctly.::
+#                           > getSittingStops(second)         ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>. Correctly handles post-midnight services::
+#                           > getAllTrips()                   ::Returns a list of PTTrip objects representing those trips that run at least once on self (Day). Accounts for midnight bug correctly::
 
 #                         Mode(Database)                      ::A vehicle class, like "Bus", "Rail", "Ferry" and "Cable Car"::
 #                           > __init__(database, modetype)    ::<database> is a Database object. <modetype> is a string (as above) of the mode of interest::
@@ -39,7 +39,7 @@
 #                           > __init__(database, service_id)  ::<service_id> is an Integer. See database::
 #                           > getRoutes_PTService()           ::Returns a list of all of the Route objects based on the route_id or route_ids (plural) that the PTService object represents::
 
-#                         Agency(Database)                    ::An Agency is an opertor usually contracted to run one or more routes with vehicles that they own. They are subject to performance measurements and re-tendering, etc::
+#                         Agency(Database)                    ::An Agency is an opertor usually contracted to run one or more routes with vehicles that they own. They are subject to performance measurements and re-tendering, etc.::
 #                           > __init(Database, agency_id)     ::<database> is a Database object. <agency_id> is a String representing the abbreviation of the agency name::
 #                           > getAgencyName()                 ::Returns a string of the full Agency name::
 #                           > getRoutes_Agency()              ::Returns a list of the Route objects representing the routes that the agency is contracted to operate on::
@@ -68,6 +68,7 @@
 #                           > whereIsVehicle(second, DayObj)  ::Returns a tuple (x, y) or (lon, lat) of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object::
 #                           > intervalByIntervalPosition(DayObj, interval=1) ::WRITES TO THE DATABASE about the positions of every vehicle on <DayObj> at the temporal resolution of <interval>. Does not write duplicates. Make sure to only pass it PTTrips that doesTripRunOn(DayObj) == True::
 #                           > get ShapeID()                   ::Each trip has a particular shape, this returns the ID of it (str)::
+#                           > getTripStartDay(DayObj)         ::The start day of a PTTrip is either the given DayObj, or the day before it (or neither if it doesn't run). This method returs DayObj if the trip starts on DayObj, the DayObj BEFORE DayObj if that's right, and None in the third case::
 
 #                         Stop(Object)                        ::A place where PT vehicles stop within a route::
 #                           > __init__(database, stop_id)     ::<database> is a Database object. <stop_id> is an Integer identifying the trip uniquely, able to link it to stop_times. See the database::
@@ -350,33 +351,48 @@ class Day(Database):
 
   def getServicesDay(self):
     '''
-    Returns a list of service IDs representing services that are running on self.day.
-    Takes into account the day of the week, and the cancelled services on Day.**
-
-    **No longer takes into account "cancelled" services, due to the unreliability of this information.
-    The code that achieved this has been commented out within the function, rather than removed.
-
-    Does not take into account services that go beyond midnight.
+    Returns a list of service IDs representing services that are running
+    on self.day. Takes into account the day of the week, and the
+    cancelled services on Day.
+    
+    Does not take into account services that go beyond midnight, but a
+    service is not meant to represent a trip.
+    PTTrip.doesTripRunOn(DayObj) correctly accounts for the midnight bug
     '''
-    # Fill template, including use of today's day of the week.
-
-    # Old template, uses CD.date <> "$today2", which seemed to give wrong answer
-    ##q = Template('SELECT DISTINCT C.service_id FROM calendar AS C LEFT OUTER JOIN calendar_dates AS CD ON CD.service_id = C.service_id WHERE C.start_Date <= "$today1" AND C.end_date >= "$tomorrow" AND C.$DayOfWeek = 1 AND CD.date <> "$today2"')
-    ##query = q.substitute(today1 = self.isoDate[0:10], tomorrow = self.tomorrow[0:10], DayOfWeek = self.dayOfWeekStr, today2 = self.isoDate[0:10])
-
-    # New template
+    regularservices = []
     q = Template('SELECT DISTINCT C.service_id FROM calendar AS C LEFT OUTER JOIN calendar_dates AS CD ON CD.service_id = C.service_id WHERE C.start_Date <= "$today1" AND C.end_date >= "$tomorrow" AND C.$DayOfWeek = 1')
     query = q.substitute(today1 = self.isoDate[0:10], tomorrow = self.tomorrow[0:10], DayOfWeek = self.dayOfWeekStr)
+    for service in self.cur.execute(query):
+      # Ordinarily, the service operates on self (Day)
+      regularservices.append(service[0])
+    
+    # Find all removals and additions on self (Day)
+    removed, added = [], []
+    q = Template('SELECT * FROM calendar_dates WHERE date = "$date"')
+    query = q.substitute(date = str(self.isoDate) + ".000")
+    print query
     self.cur.execute(query)
-
-    # Data structure to return
+    for service in self.cur.fetchall():
+      if service[2] == 2:
+        # Then the service has been removed on this self (Day) as an exception to the rule
+        removed.append(service[0])
+      elif service[2] == 1:
+        # Then the service has been added on this self (Day) as an exception to the rule
+        added.append(service[0])
+      else:
+        raise Exception
+        
     gotServices = []
-    services = self.cur.fetchall()
-    for service in services:
-      gotServices.append(str(service[0]))
-
-
-
+    for service in regularservices:
+       if service not in removed:
+         # If the service has not been removed
+        gotServices.append(str(service))
+    
+    for service in added:
+      if service not in gotServices:
+        # If there is an additional service not already captured
+        gotServices.append(service)
+      
     return gotServices
 
   def plotModeSplit_NVD3(self, databaseObj, city):
@@ -957,6 +973,45 @@ class PTTrip(Route):
     query = q.substitute(trip_id = self.trip_id)
     self.cur.execute(query)
     return self.cur.fetchall()[0][0]
+    
+  def getTripStartDay(self, DayObj):
+    '''
+    Trips that run over midnight strictly operate on two days of the
+    week. However, exceptions are recorded as calendar dates that refer
+    to the day when the trip started.
+    Thus, given a <DayObj>, if the trip operates at all, it began on
+    that day, or the day before it. This trip returns <DayObj>, or a
+    Day object representing the day before <DayObj>, whichever correctly
+    represents the day the trip BEGAN.
+    
+    If the trip runs on neither <DayObj> on the day before, returns
+    None.
+    
+    NOTE: This does not check whether a trip actually ran on a given
+    day (indeed, this is an input to that check).
+    '''
+    q = Template('SELECT DISTINCT $DOW FROM stop_times_amended WHERE trip_id = "$trip_id"')
+    query = q.substitute(DOW = DayObj.dayOfWeekStr, trip_id = self.trip_id)
+    self.cur.execute(query)
+    nottoday, today = False, False
+    for indication in self.cur.fetchall():
+      print indication
+      if indication[0] == 0:
+        nottoday = True
+      elif indication[0] == 1:
+        today = True
+      else:
+        raise CustomException("calendar_date exceptions must be in [1, 2]")
+    if nottoday == True and today == True:
+      # Trip runs through a midnight period
+      # The trip began "yesterday"
+      return Day(self.database, DayObj.yesterdayObj)
+    elif nottoday == False and today == True:
+      # Trip starts and ends before midnight
+      return DayObj
+    elif nottoday == True and today == False:
+    # Trip does not even on this day of the week
+      return None
 
   def doesTripRunOn(self, DayObj):
     '''
@@ -989,7 +1044,7 @@ class PTTrip(Route):
       else:
         # The trip does not end with a time beyond "23:59:59.999"
         return (False, False)
-
+        
     q = Template('SELECT * FROM calendar WHERE service_id = "$service_id"')
     serviceid = self.getService().service_id
     query = q.substitute(service_id = serviceid)
@@ -1059,13 +1114,17 @@ class PTTrip(Route):
     DOW = DayObj.dayOfWeekStr.title()
     if Week[DOW] is True:
       # Then the trip does run on this day of the week, but we still need to check if there's an exception
-      # for this particular day
-      # Or, we could ignore exceptions for particular dates and just assume the full system is running
-      # The latter is risky, as it can also ignore additional trips, and include things that run, say, monthly,
-      # not every week. Thus, this is not done.
+      # for this particular date.
+      
+      # TODO: fix the date to be the start date of the trip, not today
+      tripdate = self.getTripStartDay(DayObj)
+      if tripdate == None:
+        raise Exception
+      else:
+        tripdate = tripdate.isoDate + ".000"
+      
       try:
         q = Template('SELECT * FROM calendar_dates WHERE service_id = "$service_id" and date = "$date"')
-        tripdate = DayObj.isoDate + ".000"
         query = q.substitute(service_id = serviceid, date = tripdate)
         self.cur.execute(query)
         exceptions = self.cur.fetchall()
@@ -1657,15 +1716,22 @@ if __name__ == '__main__':
   myDay = Day(myDB, datetime.datetime(2013, 12, 8))
   myDay.bokehFrequencyByMode(1*60, Show=True)
   '''
-
-  ## Testing new doesModeRunOn()
+  
+  ## Testing for addressing post-midnight bug with relevant methods
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 8))
+  myDay = Day(myDB, datetime.datetime(2013, 12, 8)) # (2013, 12, 8)
 
-  print len(myDay.getServicesDay()), myDay.getServicesDay() # Began
-
-  print myDay.getAllTrips() # FIXME
-    
+  servicestoday = myDay.getServicesDay()
+  #print len(myDay.getServicesDay()), myDay.getServicesDay() # FIXME
+  print len(servicestoday), servicestoday
+  for service in servicestoday:
+    serv = PTService(myDB, service)
+    for route in serv.getRoutes_PTService():
+      print route, service
+      
+  myTrip = PTTrip(myDB, "5849") # Trip that nominally only runs on Saturday, but returns True for running on a Sunday because it crosses Midnight
+  print myTrip.doesTripRunOn(myDay), myTrip.getService().service_id, myTrip.getLongName(), myTrip.getShortName(), myTrip.getRouteID()
+  
   print ""
   print ""
   ################################################################################
