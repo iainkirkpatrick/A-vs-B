@@ -748,11 +748,11 @@ class Mode(Database):
     # Append to set if the service runs on DayObj, return list of Route objects
     return list(set([Route(self.database, tripservice[0]) for tripservice in routeservicespairs if str(tripservice[1]) in services]))
 
-  def countRoutesModeInDay(self, DayObj):
+  def countRoutesModeInDay(self, DayObj, verbose=False):
     '''
     Returns an integer representing the count of the returned values from Mode.getRoutesModeInDay(DayObj).
     '''
-    return len(self.getRoutesModeInDay(DayObj))
+    return len(self.getRoutesModeInDay(DayObj, verbose=verbose))
 
   def countTripsModeInDay(self, DayObj):
     '''
@@ -1727,9 +1727,8 @@ if __name__ == '__main__':
   
   ## Testing for addressing post-midnight bug with relevant methods
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2014, 1, 1)) # (2013, 12, 8)
-  for R in Mode(myDB, "Rail").getRoutesModeInDay(myDay, verbose=False):
-    print R.getShortName(), "\t", R.getLongName()
+  myDay = Day(myDB, datetime.datetime(2013, 12, 17)) # (2013, 12, 8)
+  print Mode(myDB, "Rail").countRoutesModeInDay(myDay, verbose=True)
   print ""
   print ""
   ################################################################################
