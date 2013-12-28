@@ -3,91 +3,90 @@
 # Name:         WTV_Class_v1.py
 # Purpose:      Classes for methods to be called for accessing the TransportViewer.db
 #
-#                       Classes and completed methods:
+#  Classes and completed methods:
 
-#                         Database(Object)                    ::A GTFS feed transformed into a SQLite database::
-#                           > __init__(database)              ::<database> is a SQLite3 database, constructed by the use of WTV_GTFStoSQL_v*.py::
-#                           > getFeedInfo()                   ::Returns cur.fetchall() of the feed_info table::
-#                           > feedEndDate()                   ::Returns a datetime object representing the end date of the GTFS feed::
-#                           > feedStartDate()                 ::Returns a datetime object representing the start date of the GTFS feed::
-#                           > feedDateRange()                 ::Returns a tuple of two datetime objects, representing [0] the start date of the feed and [1] the end date of the feed::
-#                           > getAllModes()                   ::Returns a list of Mode objects, one for each type of route_type_desc in the GTFS (routes table)::
-#                           > getAgencies()                   ::Returns cur.fetchall() of the agency table::
-#                           > checkTableEmpty(tableName="intervals") :: Checks if <tableName> (str) has any rows; returns Boolean to that effect::
+#    Database(Object)                    ::A GTFS feed transformed into a SQLite database::
+#      > __init__(database)              ::<database> is a SQLite3 database, constructed by the use of WTV_GTFStoSQL_v*.py::
+#      > getFeedInfo()                   ::Returns cur.fetchall() of the feed_info table::
+#      > feedEndDate()                   ::Returns a datetime object representing the end date of the GTFS feed::
+#      > feedStartDate()                 ::Returns a datetime object representing the start date of the GTFS feed::
+#      > feedDateRange()                 ::Returns a tuple of two datetime objects, representing [0] the start date of the feed and [1] the end date of the feed::
+#      > getAllModes()                   ::Returns a list of Mode objects, one for each type of route_type_desc in the GTFS (routes table)::
+#      > getAgencies()                   ::Returns cur.fetchall() of the agency table::
+#      > checkTableEmpty(tableName="intervals") :: Checks if <tableName> (str) has any rows; returns Boolean to that effect::
 
-#                         Day(Database)                       ::A date. PT runs by daily schedules, considering things like whether it is a weekday, etc::
-#                           > __init__(database, datetimeObj) ::<database> is a Database object. <datetimeObj> is a datetime object::
-#                           > getCanxServices()               :CAUTION:Returns a list of PTService objects that are cancelled according to the calendar_dates table. For Wellington I suspect this table is a little dodgy::
-#                           > getServicesDay()                ::Returns a list of service IDs of services that are scheduled to run on self (Day). Accounts for exceptional additions and removals of services; but not the midnight bug, as a PTService is not a PTTrip::
-#                           > plotModeSplitNVD3(databaseObj, city) ::Uses the Python-NVD3 library to plot a pie chart showing the breakdown of vehicle modes (num. services) in Day. Useful to compare over time, weekday vs. weekend, etc. <city> is str, used in the title of the chart::
-#                           > animateDay()                    :Unfinished, but working:::
-#                           > countActiveTrips(second)        ::Returns an integer count of the number of trips of any mode that are operating at <second> on self::
-#                           > countActiveTripsByMode(second)  ::Returns an dictionary of {mode: integer} pairs similar to self.countActiveTrips(<second>) that breaks it down by mode::
-#                           > bokehFrequencyByMode(n, Show=False, name="frequency.py", title="frequency.py", graphTitle="Wellington Public Transport Services, ")  ::Returns an HTML graph of the number of active service every <n> seconds, on the second, broken down by mode::
-#                           > getSittingStops(second)         ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>. Correctly handles post-midnight services::
-#                           > getAllTrips()                   ::Returns a list of PTTrip objects representing those trips that run at least once on self (Day). Accounts for midnight bug correctly::
+#    Day(Database)                       ::A date. PT runs by daily schedules, considering things like whether it is a weekday, etc::
+#      > __init__(database, datetimeObj) ::<database> is a Database object. <datetimeObj> is a datetime object::
+#      > getCanxServices()               :CAUTION:Returns a list of PTService objects that are cancelled according to the calendar_dates table. For Wellington I suspect this table is a little dodgy::
+#      > getServicesDay()                ::Returns a list of service IDs of services that are scheduled to run on self (Day). Accounts for exceptional additions and removals of services; but not the midnight bug, as a PTService is not a PTTrip::
+#      > plotModeSplitNVD3(databaseObj, city) ::Uses the Python-NVD3 library to plot a pie chart showing the breakdown of vehicle modes (num. services) in Day. Useful to compare over time, weekday vs. weekend, etc. <city> is str, used in the title of the chart::
+#      > animateDay()                    :Unfinished, but working:::
+#      > countActiveTrips(second)        ::Returns an integer count of the number of trips of any mode that are operating at <second> on self::
+#      > countActiveTripsByMode(second)  ::Returns an dictionary of {mode: integer} pairs similar to self.countActiveTrips(<second>) that breaks it down by mode::
+#      > bokehFrequencyByMode(n, Show=False, name="frequency.py", title="frequency.py", graphTitle="Wellington Public Transport Services, ")  ::Returns an HTML graph of the number of active service every <n> seconds, on the second, broken down by mode::
+#      > getSittingStops(second)         ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>. Correctly handles post-midnight services::
+#      > getAllTrips()                   ::Returns a list of PTTrip objects representing those trips that run at least once on self (Day). Accounts for midnight bug correctly::
 
-#                         Mode(Database)                      ::A vehicle class, like "Bus", "Rail", "Ferry" and "Cable Car"::
-#                           > __init__(database, modetype)    ::<database> is a Database object. <modetype> is a string (as above) of the mode of interest::
-#                           > getRoutesOfMode                 ::Returns a list of route objects that are of the same mode type as self::
-#                           > getRoutesModeInDay(DayObj)      ::Same as Mode.getRoutesModeInDay, but only returns those routes that run on DayObj::
-#                           > countRoutesModeInDay(DayObj)    ::A count of the returned values from Mode.getRoutesModeInDay(DayObj)::
-#                           > countTripsModeInDay(DayObj)     :INEFFICIENT:A count of the number of discrete trips made on the routes returned from Mode.getRoutesModeInDay(DayObj)::
-#                           > getAgencies()                   ::Return a list of Agency objects that have routes of the same <modetype> as Mode::
+#    Mode(Database)                      ::A vehicle class, like "Bus", "Rail", "Ferry" and "Cable Car"::
+#      > __init__(database, modetype)    ::<database> is a Database object. <modetype> is a string (as above) of the mode of interest::
+#      > getRoutesOfMode                 ::Returns a list of route objects that are of the same mode type as self::
+#      > getRoutesModeInDay(DayObj)      ::Same as Mode.getRoutesModeInDay, but only returns those routes that run on DayObj::
+#      > countRoutesModeInDay(DayObj)    ::A count of the returned values from Mode.getRoutesModeInDay(DayObj)::
+#      > countTripsModeInDay(DayObj)     :INEFFICIENT:A count of the number of discrete trips made on the routes returned from Mode.getRoutesModeInDay(DayObj)::
+#      > getAgencies()                   ::Return a list of Agency objects that have routes of the same <modetype> as Mode::
 
-#                         PTService(Database)                 ::A "service" in GTFS parlance, is used to identify when a service is available for one or more routes, when these are run, and what trips they represent::
-#                           > __init__(database, service_id)  ::<service_id> is an Integer. See database::
-#                           > getRoutes_PTService()           ::Returns a list of all of the Route objects based on the route_id or route_ids (plural) that the PTService object represents::
+#    PTService(Database)                 ::A "service" in GTFS parlance, is used to identify when a service is available for one or more routes, when these are run, and what trips they represent::
+#      > __init__(database, service_id)  ::<service_id> is an Integer. See database::
+#      > getRoutes_PTService()           ::Returns a list of all of the Route objects based on the route_id or route_ids (plural) that the PTService object represents::
 
-#                         Agency(Database)                    ::An Agency is an opertor usually contracted to run one or more routes with vehicles that they own. They are subject to performance measurements and re-tendering, etc.::
-#                           > __init(Database, agency_id)     ::<database> is a Database object. <agency_id> is a String representing the abbreviation of the agency name::
-#                           > getAgencyName()                 ::Returns a string of the full Agency name::
-#                           > getRoutes_Agency()              ::Returns a list of the Route objects representing the routes that the agency is contracted to operate on::
-#                           > getServices()                   ::Returns a list of the PTService objects representing the services that the agency's routes represent::
+#    Agency(Database)                    ::An Agency is an opertor usually contracted to run one or more routes with vehicles that they own. They are subject to performance measurements and re-tendering, etc.::
+#      > __init(Database, agency_id)     ::<database> is a Database object. <agency_id> is a String representing the abbreviation of the agency name::
+#      > getAgencyName()                 ::Returns a string of the full Agency name::
+#      > getRoutes_Agency()              ::Returns a list of the Route objects representing the routes that the agency is contracted to operate on::
+#      > getServices()                   ::Returns a list of the PTService objects representing the services that the agency's routes represent::
 
-#                         Route(Agency)                       ::A Route is a path that a trip takes. It has a shape, including vertices and end points. Each route is operated by a single Agency::
-#                           > __init__(database, route_id)    ::<database> is a Database object. <route_id> is a String (e.g. 'WBAO001I' for the incoming Number 1 bus)::
-#                           > getAgencyID()                   ::Returns a String of the Agency (agency_id) that operates the route. Used to construct the Agency object that the Route object inherits from.::
-#                           > getShortName()                  ::Returns a String of the route_short_name attribute from the routes table representing the name displayed to passengers on bus signage etc., e.g. "130"::
-#                           > getLongName()                   ::Returns a String of the route_long_name attribute from the routes table representing the full name of the route::
-#                           > getTripsInDay(DayObj)           ::Returns a list of PTTrip objects that run along the entire route. <DayObj> is a Day object::
-#                           > countTripsInDay(DayObj)         ::Returns an Integer count of the trips that run on the route on <DayObj> (a la Route.getTripsInDay())::
-#                           > doesRouteRunOn(DayObj)          ::Returns a Boolean according to whether the Route has a trip on <DayObj>::
-#                           > inboundOrOutbound()             ::Returns Strings "Incoming" or "Outgoing" according to whether the Route is such::
-#                           > getMode()                       ::Returns the mode of the route, as a Mode object::
+#    Route(Agency)                       ::A Route is a path that a trip takes. It has a shape, including vertices and end points. Each route is operated by a single Agency::
+#      > __init__(database, route_id)    ::<database> is a Database object. <route_id> is a String (e.g. 'WBAO001I' for the incoming Number 1 bus)::
+#      > getAgencyID()                   ::Returns a String of the Agency (agency_id) that operates the route. Used to construct the Agency object that the Route object inherits from.::
+#      > getShortName()                  ::Returns a String of the route_short_name attribute from the routes table representing the name displayed to passengers on bus signage etc., e.g. "130"::
+#      > getLongName()                   ::Returns a String of the route_long_name attribute from the routes table representing the full name of the route::
+#      > getTripsInDay(DayObj)           ::Returns a list of PTTrip objects that run along the entire route. <DayObj> is a Day object::
+#      > countTripsInDay(DayObj)         ::Returns an Integer count of the trips that run on the route on <DayObj> (a la Route.getTripsInDay())::
+#      > doesRouteRunOn(DayObj)          ::Returns a Boolean according to whether the Route has a trip on <DayObj>::
+#      > inboundOrOutbound()             ::Returns Strings "Incoming" or "Outgoing" according to whether the Route is such::
+#      > getMode()                       ::Returns the mode of the route, as a Mode object::
 
-#                         PTTrip(Route)                       ::A PTTrip is a discrete trip made by single mode along a single route::
-#                           > __init__(database, trip_id)     ::<database> is a Database object. <trip_id> is an Integer identifying the trip uniquely. See the database::
-#                           > getRouteID()                    ::Returns the route_id (String) of the route that the trip follows. Used to construct the Route object which the Trip object inherits::
-#                           > doesTripRunOn(DayObj)     ::Returns a Boolean reporting whether the PTTtrip runs on <DayObj> or not. Considers the exceptions in calendar_dates before deciding, and handles >24h time::
-#                           > getRoute()                      ::Returns the Route object representing the route taken on Trip::
-#                           > getService()                    ::Returns the PTService object that includes this trip::
-#                           > getShapelyLine()                ::Returns a Shapely Line object representing the shape of the trip::
-#                           > plotShapelyLine()               ::Uses matplotlib and Shapely to plot the shape of the trip. Does not plot stops (yet?)::
-#                           > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
-#                           > whereIsVehicle(second, DayObj)  ::Returns a tuple (x, y) or (lon, lat) of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object::
-#                           > intervalByIntervalPosition(DayObj, interval=1) ::WRITES TO THE DATABASE about the positions of every vehicle on <DayObj> at the temporal resolution of <interval>. Does not write duplicates. Make sure to only pass it PTTrips that doesTripRunOn(DayObj) == True::
-#                           > get ShapeID()                   ::Each trip has a particular shape, this returns the ID of it (str)::
-#                           > getTripStartDay(DayObj)         ::The start day of a PTTrip is either the given DayObj, or the day before it (or neither if it doesn't run). This method returs DayObj if the trip starts on DayObj, the DayObj BEFORE DayObj if that's right, and None in the third case::
+#    PTTrip(Route)                       ::A PTTrip is a discrete trip made by single mode along a single route::
+#      > __init__(database, trip_id)     ::<database> is a Database object. <trip_id> is an Integer identifying the trip uniquely. See the database::
+#      > getRouteID()                    ::Returns the route_id (String) of the route that the trip follows. Used to construct the Route object which the Trip object inherits::
+#      > doesTripRunOn(DayObj)           ::Returns a Boolean reporting whether the PTTtrip runs on <DayObj> or not. Considers the exceptions in calendar_dates before deciding, and handles >24h time::
+#      > getRoute()                      ::Returns the Route object representing the route taken on Trip::
+#      > getService()                    ::Returns the PTService object that includes this trip::
+#      > getShapelyLine()                ::Returns a Shapely Line object representing the shape of the trip::
+#      > plotShapelyLine()               ::Uses matplotlib and Shapely to plot the shape of the trip. Does not plot stops (yet?)::
+#      > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
+#      > whereIsVehicle(second, DayObj)  ::Returns a tuple (x, y) or (lon, lat) of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object::
+#      > intervalByIntervalPosition(DayObj, interval=1) ::WRITES TO THE DATABASE about the positions of every vehicle on <DayObj> at the temporal resolution of <interval>. Does not write duplicates. Make sure to only pass it PTTrips that doesTripRunOn(DayObj) == True::
+#      > get ShapeID()                   ::Each trip has a particular shape, this returns the ID of it (str)::
+#      > getTripStartDay(DayObj)         ::The start day of a PTTrip is either the given DayObj, or the day before it (or neither if it doesn't run). This method returs DayObj if the trip starts on DayObj, the DayObj BEFORE DayObj if that's right, and None in the third case::
 
-#                         Stop(Object)                        ::A place where PT vehicles stop within a route::
-#                           > __init__(database, stop_id)     ::<database> is a Database object. <stop_id> is an Integer identifying the trip uniquely, able to link it to stop_times. See the database::
-#                           > getStopCode()                   ::Returns the stop_code, a short(er) integer version similar to stop_id, but published on signs and used in passenger text alerts::
-#                           > getStopName()                   ::Returns the stop_name, a long name of the stop (String)::
-#                           > getStopDesc()                   ::Returns the stop_desc, a short but textual name for the stop::
-#                           > getLocationType()               ::Returns location_type_desc from the stops table: ["Stop", "Station", "Hail and Ride"]. For Metlink: ["Stop", "Hail and Ride"]::
-#                           > getShapelyPoint()               ::Returns a shapely Point object representing the location of the stop::
-#                           > getStopTime(TripObj)            ::Returns a dictionary of {"stop_sequence":integer, "arrival_time":string, "departure_time":string, "pickup_type_text":string, "drop_off_type_text":string, "shape_dist_traveled":float} at the Stop for a given Trip. Strings are used for arrival_time and departure_time where datetime.time objects would be preferred, because these times can exceed 23:59:59.999999, and so cause a value error if instantiated::
-
+#    Stop(Object)                        ::A place where PT vehicles stop within a route::
+#      > __init__(database, stop_id)     ::<database> is a Database object. <stop_id> is an Integer identifying the trip uniquely, able to link it to stop_times. See the database::
+#      > getStopCode()                   ::Returns the stop_code, a short(er) integer version similar to stop_id, but published on signs and used in passenger text alerts::
+#      > getStopName()                   ::Returns the stop_name, a long name of the stop (String)::
+#      > getStopDesc()                   ::Returns the stop_desc, a short but textual name for the stop::
+#      > getLocationType()               ::Returns location_type_desc from the stops table: ["Stop", "Station", "Hail and Ride"]. For Metlink: ["Stop", "Hail and Ride"]::
+#      > getShapelyPoint()               ::Returns a shapely Point object representing the location of the stop::
+#      > getStopTime(TripObj)            ::Returns a dictionary of {"stop_sequence":integer, "arrival_time":string, "departure_time":string, "pickup_type_text":string, "drop_off_type_text":string, "shape_dist_traveled":float} at the Stop for a given Trip. Strings are used for arrival_time and departure_time where datetime.time objects would be preferred, because these times can exceed 23:59:59.999999, and so cause a value error if instantiated::
 
 # Tasks for next iteration/s:
-#                > KEEP CODE DOCUMENTED THROUGHOUT
-#                > Develop the HTML and CSS for the website and embed the JavaScript graphs
-#                > Work on the visualisation of the network in real time (based on work done by Chris McDowell...)
-#                > Work on the server//Django side of things to get an actual website!
-#                > Have the first version of the website up and running (one city)!
-#                > Expand to multiple cities
-#                > Consider how fare information can be added
+#  > KEEP CODE DOCUMENTED THROUGHOUT
+#  > Develop the HTML and CSS for the website and embed the JavaScript graphs
+#  > Work on the visualisation of the network in real time (based on work done by Chris McDowell...)
+#  > Work on the server//Django side of things to get an actual website!
+#  > Have the first version of the website up and running (one city)!
+#  > Expand to multiple cities
+#  > Consider how fare information can be added
 #
 #
 # Author:        Richard Law.
@@ -995,7 +994,6 @@ class PTTrip(Route):
     self.cur.execute(query)
     nottoday, today = False, False
     for indication in self.cur.fetchall():
-      print indication
       if indication[0] == 0:
         nottoday = True
       elif indication[0] == 1:
@@ -1116,7 +1114,9 @@ class PTTrip(Route):
       # Then the trip does run on this day of the week, but we still need to check if there's an exception
       # for this particular date.
       
-      # TODO: fix the date to be the start date of the trip, not today
+      # The start of the trip is either "today" (DayObj) or "yesterday" (the day before DayObj),
+      # depending on whether the trip crosses midnight.
+      # This date is the relevant one to check for exceptions.
       tripdate = self.getTripStartDay(DayObj)
       if tripdate == None:
         raise Exception
@@ -1142,7 +1142,6 @@ class PTTrip(Route):
       # Even if the trip does not normally run on this day of the week,
       # there may still be exceptions in the form of ADDITIONS
       q = Template('SELECT * FROM calendar_dates WHERE service_id = "$service_id" and date = "$date"')
-      tripdate = DayObj.isoDate + ".000"
       query = q.substitute(service_id = serviceid, date = tripdate)
       self.cur.execute(query)
       exceptions = self.cur.fetchall()
@@ -1150,17 +1149,7 @@ class PTTrip(Route):
         excdate, exctype = exception[1], exception[3]
         if excdate == tripdate and exctype == 'Added':
           return True
-
-      ## One final check is whether the trip has a travel time that is stored beyond midnight (annoying quirk of the GTFS)
-      #if checkIfAfterMidnight(self, DayObj) == True:
-        ## Then the service runs in the early hours of a DayObj... but is it this DayObj?
-        #tomorrowDict = {"Monday": "Tuesday", "Tuesday": "Wednesday", "Wednesday": "Thursday", "Thursday": "Friday", "Friday": "Saturday", "Saturday": "Sunday", "Sunday": "Monday"}
-        ### DOW = DayObj.dayOfWeekStr.title()
-        #tomorrow = tomorrowDict[DOW]
-        #if Week[tomorrow] == True:
-          ## Then the service runs after midnight into "tomorrow": which is "today" when considering DayObj
-          #return True
-
+          
       # Once all relevant exceptions have been checked and no additions have been found,
       # we have confirmed that the trip does not run on <DayObj>
       return False
