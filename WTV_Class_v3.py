@@ -20,8 +20,9 @@
 #      > getCanxServices()               :CAUTION:Returns a list of PTService objects that are cancelled according to the calendar_dates table. For Wellington I suspect this table is a little dodgy::
 #      > getServicesDay()                ::Returns a list of service IDs of services that are scheduled to run on self (Day). Accounts for exceptional additions and removals of services; but not the midnight bug, as a PTService is not a PTTrip::
 #      > plotModeSplitNVD3(databaseObj, city) ::Uses the Python-NVD3 library to plot a pie chart showing the breakdown of vehicle modes (num. services) in Day. Useful to compare over time, weekday vs. weekend, etc. <city> is str, used in the title of the chart::
-#      > animateDay()                    :Unfinished, but working:::
-#      > countActiveTrips(second)        ::Returns an integer count of the number of trips of any mode that are operating at <second> on self::
+#      > animateDay()                    :Unfinished, but working::
+#      > getActiveTrips(second)          ::Returns a list of PTTrip objects representing those trips that are running on self (Day) at <second>. Accounts for service cancellations and the "midnight bug"::
+#      > countActiveTrips(second)        ::Returns an integer count of the number of trips of any mode that are operating at <second> on self (Day), according to self.getActiveTrips(<second>)::
 #      > countActiveTripsByMode(second)  ::Returns an dictionary of {mode: integer} pairs similar to self.countActiveTrips(<second>) that breaks it down by mode::
 #      > bokehFrequencyByMode(n, Show=False, name="frequency.py", title="frequency.py", graphTitle="Wellington Public Transport Services, ")  ::Returns an HTML graph of the number of active service every <n> seconds, on the second, broken down by mode::
 #      > getSittingStops(second)         ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>. Correctly handles post-midnight services::
@@ -421,17 +422,19 @@ class Day(Database):
     output_file.close()
     return None
 
-  def countActiveTrips(self, second, internalCall=False):
+  def getActiveTrips(self, second, internalCall=False):
     '''
-    Returns an integer count of the number of trips in operation during self at <second>.
-    <second> is a datetime.time object representing the seconds after midnight on self.
-    <internalCall> is used by self.countActiveTripsByMode
+    Returns an integer count of the number of trips in operation during
+    self at <second>.
+    <second> is a datetime.time object representing the seconds after
+    midnight on self.<internalCall> is used by self.countActiveTripsByMode
 
     Examples of <second>:
     4pm (exactly, to the second) = datetime.datetime.time(16)
     4.01pm (to the second) = datetime.datetime.time(16, 01)
     4.01pm and 32 seconds = datetime.datetime.time(16, 01, 32)
-    # if you're silly and give it split seconds... I check and round to nearest whole second.
+    # if you're silly and give it split seconds... I check and round to
+    the nearest whole second (01:00:00.002 >> 01:00:00.000)
     '''
     # Fix up the time
     # There could be more elegant ways...
@@ -451,8 +454,9 @@ class Day(Database):
             hours = second.hour + 1
             mins = 0
             if hours > 23:
-                # If 24 hours, just take maximum
-                newsecond = datetime.time(23, 59, 59)
+                # If 24 hours or more, subtract 24 hours
+                hours = hours - 24
+                newsecond = datetime.time(hours, mins, secs)
       try:
         hours
       except:
@@ -472,28 +476,60 @@ class Day(Database):
 
     else:
       newsecond = second
-
-    # Use newsecond to get a count of the number of vehicles operating at second
-    # 1. convert newsecond to pure seconds
-    newsecond = str(newsecond.hour*3600 + newsecond.minute*60 + newsecond.second)
-    # 2. make and execute ths SQL statement
-    q = 'SELECT COUNT(DISTINCT trip_id) FROM intervals WHERE date = "%s"' % newsecond # Dont change this without referring to self.countActiveTripsByMode first
-    self.cur.execute(q)
-    if internalCall == False:
-      return self.cur.fetchone()[0]
-    else:
-      return q
+      
+    # Use newsecond to get all of the trips that operate at <second>
+    newsecond1 = str(newsecond.hour*3600 + newsecond.minute*60 + newsecond.second)
+    query = 'SELECT DISTINCT trip_id FROM intervals WHERE date = "%s"' % newsecond1 # Dont change this without referring to self.countActiveTripsByMode first
+    self.cur.execute(query)
+    nominallyrunning = self.cur.fetchall()
+    
+    # Check if these trips operate on self (Day); ignore those that don't.
+    todaystripobjs, todaystrips, testtrips = self.getAllTrips(), [], []
+    for trip in todaystripobjs:
+      todaystrips.append(trip.trip_id)
+    for trip_id in nominallyrunning:
+      testtrips.append(trip_id[0])
+      
+    tripsnow, tripsnowobjs = list(set(todaystrips).intersection(set(testtrips))), []
+    for trip in tripsnow:
+      tripsnowobjs.append(PTTrip(self.database, str(trip)))
+    return tripsnowobjs
+        
+    #print i
+        
+    ## Use newsecond to get a count of the number of vehicles operating at <second> on self (Day)
+    ## 1. convert newsecond to pure seconds
+    #newsecond2 = str(newsecond.hour*3600 + newsecond.minute*60 + newsecond.second)
+    ## 2. make and execute ths SQL statement
+    #q = 'SELECT COUNT(DISTINCT trip_id) FROM intervals WHERE date = "%s"' % newsecond2 # Dont change this without referring to self.countActiveTripsByMode first
+    #self.cur.execute(q)
+    
+    ## internalCall is used by self.countActiveTripsByMode
+    #if internalCall == False:
+      #return self.cur.fetchone()[0]
+    #else:
+      #return q
+  
+  def countActiveTrips(self, second):
+    '''
+    A count of the trips that are running at <second> on self (Day),
+    according to self.getActiveTrips(<second>)
+    '''
+    return len(self.getActiveTrips(second))
 
   def countActiveTripsByMode(self, second):
     '''
-    Does the same as countActiveTrips(<second>), but returns a dictionary of {modetype: count} pairs.
+    Similar to countActiveTrips(<second>), but returns a dictionary of {modetype: count} pairs.
     '''
     mode_count = {}
-    q = self.countActiveTrips(second, internalCall=True)
-    q = q[0:7] + "route_type_desc, " + q[7:] + "GROUP BY route_type_desc"
-    self.cur.execute(q)
-    for mode in self.cur.fetchall():
-      mode_count[mode[0]] = mode[1]
+    trips = self.getActiveTrips(second)
+    for trip in trips:
+      mode = trip.getMode().modetype
+      if mode not in mode_count:
+        mode_count[mode] = 1
+      else:
+        mode_count[mode] = mode_count[mode] + 1
+    
     return mode_count
 
   def bokehFrequencyByMode(self, n, Show=False, name="frequency.html", pagetitle="frequency.py", graphTitle="Wellington Public Transport Services, "):
@@ -1014,13 +1050,20 @@ class PTTrip(Route):
   def doesTripRunOn(self, DayObj):
     '''
     Returns a Boolean to determine if the PTTrip runs on <DayObj>.
-    Note that this is NOT as simple as checking the GTFS calendar table: a trip can start before midnight and end the next day.
-    The typical database representation of this is to record such trips as being on the (say) Saturday but not the Sunday,
-    because the trip did not originate on Saturday.
-    I think this is wrong, so this code corrects it.
+    Note that this is NOT as simple as checking the GTFS calendar table:
+    a trip can start before midnight and end the next day.
+    The typical database representation of this is to record such trips
+    as being on the (say) Saturday but not the Sunday, because the trip
+    did not originate on Saturday. I think this is wrong, so this code
+    corrects it.
 
-    THUS: A trip that starts on Saturday and ends on Sunday will return True for Saturday and for Sunday, even if the GTFS feed
-    only says it runs on the Saturday.
+    Thus, a trip that starts on Saturday and ends on Sunday will return
+    True for Saturday and for Sunday, even if the GTFS feed only says it
+    runs on the Saturday.
+    
+    NOTE: This check cannot be performed by simply checking if the
+    PTService runs on <DayObj>, as PTServices do not account for the
+    "midnight bug".
     '''
     def checkIfAfterMidnight(self, DayObj):
       '''Brief interior function that checks if self actually runs beyond midnight, and therefore runs for more than one day'''
@@ -1710,16 +1753,7 @@ if __name__ == '__main__':
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetime.datetime(2013, 12, 8)) # (2013, 12, 8)
 
-  servicestoday = myDay.getServicesDay()
-  #print len(myDay.getServicesDay()), myDay.getServicesDay() # FIXME
-  print len(servicestoday), servicestoday
-  for service in servicestoday:
-    serv = PTService(myDB, service)
-    for route in serv.getRoutes_PTService():
-      print route, service
-      
-  myTrip = PTTrip(myDB, "5849") # Trip that nominally only runs on Saturday, but returns True for running on a Sunday because it crosses Midnight
-  print myTrip.doesTripRunOn(myDay), myTrip.getService().service_id, myTrip.getLongName(), myTrip.getShortName(), myTrip.getRouteID()
+  print myDay.countActiveTrips(datetime.time(02, 01, 30)), myDay.countActiveTripsByMode(datetime.time(02, 01, 30))
   
   print ""
   print ""
