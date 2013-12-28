@@ -349,7 +349,7 @@ class Day(Database):
         trips.append(pttrip)
     return trips
 
-  def getServicesDay(self):
+  def getServicesDay(self, verbose=False):
     '''
     Returns a list of service IDs representing services that are running
     on self.day. Takes into account the day of the week, and the
@@ -365,12 +365,11 @@ class Day(Database):
     for service in self.cur.execute(query):
       # Ordinarily, the service operates on self (Day)
       regularservices.append(service[0])
-    
+      
     # Find all removals and additions on self (Day)
     removed, added = [], []
     q = Template('SELECT * FROM calendar_dates WHERE date = "$date"')
     query = q.substitute(date = str(self.isoDate) + ".000")
-    print query
     self.cur.execute(query)
     for service in self.cur.fetchall():
       if service[2] == 2:
@@ -387,6 +386,11 @@ class Day(Database):
     
     # Add those services that have been added
     gotServices = list(set(gotServices + added))
+    
+    if verbose:
+      print "REGULAR SERVICES:", regularservices
+      print "REMOVED:", removed
+      print "ADDED:" , added
     
     return gotServices
 
@@ -723,28 +727,26 @@ class Mode(Database):
       routes.append(Route(self.database, route[0]))
     return routes
 
-  def getRoutesModeInDay(self, DayObj):
+  def getRoutesModeInDay(self, DayObj, verbose=False):
     '''
-    Same as Mode.getRoutesModeInDay, but only returns those Route objecys that run on DayObj.
+    Same as Mode.getRoutesModeInDay, but only returns those Route objects that run on DayObj.
     Has its own query.
     '''
     # Get service_id of services that are running on DayObj
-    services = DayObj.getServicesDay()
+    services = DayObj.getServicesDay(verbose=verbose)
 
     # Distinct route/service pairs of the same modetype as self.Mode.
     q = Template('SELECT DISTINCT T.route_id, T.service_id FROM trips AS T JOIN routes AS R ON T.route_id = R.route_id WHERE R.route_type_desc = "$modetype"')
     query = q.substitute(modetype = self.modetype)
     self.cur.execute(query)
-
-    # Append to set if the service runs on DayObj
-    RoutesModeInDay = set()
-    for tripservice in self.cur.fetchall():
-      route_id = tripservice[0]
-      service_id = tripservice[1]
-      if str(service_id) in services:
-        RoutesModeInDay.add(Route(self.database, route_id))
-
-    return RoutesModeInDay # Route objects
+    routeservicespairs = self.cur.fetchall()
+    
+    if verbose:
+      print "Services that are running: ", services
+      print "Distinct pairs that are possible:", routeservicespairs
+    
+    # Append to set if the service runs on DayObj, return list of Route objects
+    return list(set([Route(self.database, tripservice[0]) for tripservice in routeservicespairs if str(tripservice[1]) in services]))
 
   def countRoutesModeInDay(self, DayObj):
     '''
@@ -1725,8 +1727,9 @@ if __name__ == '__main__':
   
   ## Testing for addressing post-midnight bug with relevant methods
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 8)) # (2013, 12, 8)
-  print myDay.countActiveTrips(datetime.time(0,7)), myDay.countActiveTripsByMode(datetime.time(0,7))
+  myDay = Day(myDB, datetime.datetime(2014, 1, 1)) # (2013, 12, 8)
+  for R in Mode(myDB, "Rail").getRoutesModeInDay(myDay, verbose=False):
+    print R.getShortName(), "\t", R.getLongName()
   print ""
   print ""
   ################################################################################
