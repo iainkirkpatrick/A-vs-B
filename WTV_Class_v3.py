@@ -51,8 +51,8 @@
 #      > getAgencyID()                   ::Returns a String of the Agency (agency_id) that operates the route. Used to construct the Agency object that the Route object inherits from.::
 #      > getShortName()                  ::Returns a String of the route_short_name attribute from the routes table representing the name displayed to passengers on bus signage etc., e.g. "130"::
 #      > getLongName()                   ::Returns a String of the route_long_name attribute from the routes table representing the full name of the route::
-#      > getTripsInDay(DayObj)           ::Returns a list of PTTrip objects that run along the entire route. <DayObj> is a Day object::
-#      > countTripsInDay(DayObj)         ::Returns an Integer count of the trips that run on the route on <DayObj> (a la Route.getTripsInDay())::
+#      > getTripsInDayOnRoute(DayObj)    ::Returns a list of PTTrip objects that run along the entire route. <DayObj> is a Day object::
+#      > countTripsInDayOnRoute(DayObj)  ::Returns an Integer count of the trips that run on the route on <DayObj> (a la Route.getTripsInDayOnRoute())::
 #      > doesRouteRunOn(DayObj)          ::Returns a Boolean according to whether the Route has a trip on <DayObj>::
 #      > inboundOrOutbound()             ::Returns Strings "Incoming" or "Outgoing" according to whether the Route is such::
 #      > getMode()                       ::Returns the mode of the route, as a Mode object::
@@ -760,9 +760,9 @@ class Mode(Database):
     Unfinished.
     '''
     count = 0
-    # Could be more efficient with a dedicated query.
+    # TODO: Could be more efficient with a dedicated query.
     for route in self.getRoutesModeInDay(DayObj):
-      count += route.countTripsInDay(DayObj)
+      count += route.countTripsInDayOnRoute(DayObj)
     return count
 
   def getAgencies(self):
@@ -914,32 +914,29 @@ class Route(Agency):
     self.cur.execute(query)
     return str(self.cur.fetchall()[0][0])
 
-  def getTripsInDay(self, DayObj):
+  def getTripsInDayOnRoute(self, DayObj):
     '''
     Given a Day object, this method returns all of the trips of this route on that Day, as a list of PTTrip objects.
     '''
-    q = Template('SELECT DISTINCT T.trip_id FROM routes AS R JOIN trips AS T ON R.route_id = T.route_id JOIN calendar AS C ON T.service_id = C.service_id WHERE R.route_id ="$route_id" AND C.start_Date <= "$today" AND C.end_date >= "$nextday" AND C.$dayText = 1')
-    query = q.substitute(route_id = self.route_id, today = DayObj.isoDate[0:10], nextday = DayObj.isoDate[0:10], dayText = DayObj.dayOfWeekStr)
+    q = Template('SELECT DISTINCT T.trip_id FROM routes AS R JOIN trips AS T ON R.route_id = T.route_id WHERE R.route_id ="$route_id"')
+    query = q.substitute(route_id = self.route_id)
+    self.cur.execute(query)
+    alltripsonroute = [PTTrip(self.database, str(trip[0])) for trip in self.cur.fetchall()]
+    alltripsonroutetoday = [trip for trip in alltripsonroute if trip.doesTripRunOn(DayObj)]
+      
+    return alltripsonroutetoday
 
-    tripsInDay = []
-    for trip_id in self.cur.execute(query):
-      tripsInDay.append(PTTrip(self.database, trip_id[0]))
-    return tripsInDay
-
-  def countTripsInDay(self, DayObj):
+  def countTripsInDayOnRoute(self, DayObj):
     '''
     Given a Day object, <DayObj>, this method returns an Integer count of all the trips of this route on that Day.
     '''
-    q = Template('SELECT COUNT (DISTINCT T.trip_id) FROM routes AS R JOIN trips AS T ON R.route_id = T.route_id JOIN calendar AS C ON T.service_id = C.service_id WHERE R.route_id ="$route_id" AND C.start_date <= "$day" AND C.end_date >= "$nextday" AND C.$dayText = 1')
-    query = q.substitute(route_id = self.route_id, day = DayObj.isoDate[0:10], nextday = DayObj.tomorrow[0:10], dayText = DayObj.dayOfWeekStr)
-    self.cur.execute(query)
-    return self.cur.fetchall()[0][0]
-
+    return len(self.getTripsInDayOnRoute(DayObj))
+    
   def doesRouteRunOn(self, DayObj):
     '''
     Returns a Boolean variable (True or False) according to whether the Route has a trip on <DayObj>.
     '''
-    if self.countTripsInDay(DayObj) > 0:
+    if self.countTripsInDayOnRoute(DayObj) > 0:
       return True
     else:
       return False
@@ -1128,6 +1125,12 @@ class PTTrip(Route):
         Week["Sunday"] = False
 
     DOW = DayObj.dayOfWeekStr.title()
+    tripdate = self.getTripStartDay(DayObj)
+    if tripdate == None:
+      return False
+    else:
+      tripdate = tripdate.isoDate + ".000"
+      
     if Week[DOW] is True:
       # Then the trip does run on this day of the week, but we still need to check if there's an exception
       # for this particular date.
@@ -1135,12 +1138,6 @@ class PTTrip(Route):
       # The start of the trip is either "today" (DayObj) or "yesterday" (the day before DayObj),
       # depending on whether the trip crosses midnight.
       # This date is the relevant one to check for exceptions.
-      tripdate = self.getTripStartDay(DayObj)
-      if tripdate == None:
-        raise Exception
-      else:
-        tripdate = tripdate.isoDate + ".000"
-      
       try:
         q = Template('SELECT * FROM calendar_dates WHERE service_id = "$service_id" and date = "$date"')
         query = q.substitute(service_id = serviceid, date = tripdate)
@@ -1727,8 +1724,9 @@ if __name__ == '__main__':
   
   ## Testing for addressing post-midnight bug with relevant methods
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 17)) # (2013, 12, 8)
-  print Mode(myDB, "Rail").countRoutesModeInDay(myDay, verbose=True)
+  myDay = Day(myDB, datetime.datetime(2013, 1, 1)) # (2013, 12, 8)
+  for T in Route(myDB, "WRAHVL0O").getTripsInDayOnRoute(myDay):
+    print T.trip_id
   print ""
   print ""
   ################################################################################
