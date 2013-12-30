@@ -916,7 +916,11 @@ class Route(Agency):
 
   def getTripsInDayOnRoute(self, DayObj):
     '''
-    Given a Day object, this method returns all of the trips of this route on that Day, as a list of PTTrip objects.
+    Given a Day object, this method returns all of the trips of this
+    route on that Day, as a list of PTTrip objects.
+    
+    NOTE: It considers trips, so a trip that runs over midnight will be
+    included both on the origin day and on the following day.
     '''
     q = Template('SELECT DISTINCT T.trip_id FROM routes AS R JOIN trips AS T ON R.route_id = T.route_id WHERE R.route_id ="$route_id"')
     query = q.substitute(route_id = self.route_id)
@@ -928,7 +932,11 @@ class Route(Agency):
 
   def countTripsInDayOnRoute(self, DayObj):
     '''
-    Given a Day object, <DayObj>, this method returns an Integer count of all the trips of this route on that Day.
+    Given a Day object, <DayObj>, this method returns an Integer count 
+    of all the trips of this route on that Day.
+    
+    NOTE: Considers trips, so a trip that runs over midnight will be
+    included both on the origin day and on the following day.
     '''
     return len(self.getTripsInDayOnRoute(DayObj))
     
@@ -980,6 +988,38 @@ class PTTrip(Route):
     query = q.substitute(trip_id = self.trip_id)
     self.cur.execute(query)
     return self.cur.fetchall()[0][0]
+  
+  def getTripStartTime(self, DayObj):
+    '''
+    Returns the start time of the trip,
+    if the trip runs on <DayObj>.
+    
+    Returns a string of the form: "15:15:00.000"
+    TODO: Return a datetime.time object
+    '''
+    if self.doesTripRunOn(DayObj):
+      q = Template('SELECT arrival_time FROM stop_times_amended WHERE trip_id = "$trip_id" ORDER BY stop_sequence ASC')
+      query = q.substitute(trip_id = self.trip_id)
+      self.cur.execute(query)
+      return self.cur.fetchall()[0][0]
+    else:
+      return None
+      
+  def getTripEndTime(self, DayObj):
+    '''
+    Returns the start time of the trip,
+    if the trip runs on <DayObj>.
+    
+    Returns a string of the form: "15:15:00.000"
+    TODO: Return a datetime.time object
+    '''
+    if self.doesTripRunOn(DayObj):
+      q = Template('SELECT departure_time FROM stop_times_amended WHERE trip_id = "$trip_id" ORDER BY stop_sequence ASC')
+      query = q.substitute(trip_id = self.trip_id)
+      self.cur.execute(query)
+      return self.cur.fetchall()[-1][0]
+    else:
+      return None
     
   def getTripStartDay(self, DayObj):
     '''
@@ -1724,9 +1764,9 @@ if __name__ == '__main__':
   
   ## Testing for addressing post-midnight bug with relevant methods
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 1, 1)) # (2013, 12, 8)
-  for T in Route(myDB, "WRAHVL0O").getTripsInDayOnRoute(myDay):
-    print T.trip_id
+  myDay = Day(myDB, datetime.datetime(2013, 12, 30)) # (2013, 12, 8)
+  for T in Route(myDB, "WBAO130O").getTripsInDayOnRoute(myDay):
+    print T.getTripStartTime(myDay), T.getTripEndTime(myDay)
   print ""
   print ""
   ################################################################################
