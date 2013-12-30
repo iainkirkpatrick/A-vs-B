@@ -69,7 +69,10 @@
 #      > whereIsVehicle(second, DayObj)  ::Returns a tuple (x, y) or (lon, lat) of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object::
 #      > intervalByIntervalPosition(DayObj, interval=1) ::WRITES TO THE DATABASE about the positions of every vehicle on <DayObj> at the temporal resolution of <interval>. Does not write duplicates. Make sure to only pass it PTTrips that doesTripRunOn(DayObj) == True::
 #      > get ShapeID()                   ::Each trip has a particular shape, this returns the ID of it (str)::
-#      > getTripStartDay(DayObj)         ::The start day of a PTTrip is either the given DayObj, or the day before it (or neither if it doesn't run). This method returs DayObj if the trip starts on DayObj, the DayObj BEFORE DayObj if that's right, and None in the third case::
+#      > getTripStartDay(DayObj)         ::The start day of a PTTrip is either the given <DayObj>, or the day before it (or neither if it doesn't run). This method returns <DayObj> if the trip starts on <DayObj>, the Day BEFORE <DayObj> if that's right, and None in the third case. Raises an exception in the case of ambiguity::
+#      > getTripEndDay(DayObj)           ::The end day of a PTTrip is either the given <DayObj>, or the day after it (or neither if it doesn't run). This method returns <DayObj> if the trip ends on <DayObj>, the Day AFTER <DayObj> if that's right, and None in the third case. Raises an exception in the case of ambiguity:: 
+#      > getTripStartTime(DayObj)        ::The day and time that the trip starts, with reference to DayObj, if indeed it runs on DayObj. Returns datetime.datetime object like "2014-01-04 16:41:00", to the microsecond resolution. Returns None if PTTrip does not run on <DayObj>::
+#      > getTripEndTime(DayObj)          ::The day and time that the trip starts, with reference to DayObj, if indeed it runs on DayObj. Returns datetime.datetime object like "2014-01-04 16:41:00", to the microsecond resolution. Returns None if PTTrip does not run on <DayObj>::
 
 #    Stop(Object)                        ::A place where PT vehicles stop within a route::
 #      > __init__(database, stop_id)     ::<database> is a Database object. <stop_id> is an Integer identifying the trip uniquely, able to link it to stop_times. See the database::
@@ -1062,8 +1065,8 @@ class PTTrip(Route):
         raise CustomException("calendar_date exceptions must be in [0, 1]")
     if nottoday == True and today == True:
       # Trip runs through a midnight period
-      # Now need to find whether  it ends "today" (i.e. it started
-      # "yesterday") or "tomorrow" (i.e. it started "today")
+      # Now need to find whether  it starts "today" (i.e. it ends
+      # "tomorrow") or "yesterday" (i.e. it ends "today")
       # This can be ambiguous.
       yesterday = Day(self.database, DayObj.yesterdayObj)
       today = DayObj.dayOfWeekStr
@@ -1079,6 +1082,10 @@ class PTTrip(Route):
         # I don't know how prevalent this is, so for now I'll make it
         # an exception, and address it conclusively if it arises.
         # If it arises, making it return "today" should work okay-ish.
+        # Alternatively, this could return two objects, one with it
+        # ending "today" and one with it ending "tomorrow".
+        # The latter case will require additional checks regarding
+        # duplicates.
         raise Exception
       elif (beginning[0] == 1 and beginning[1] == 1) or (beginning[1] and beginning[2] == 1):
         # Also an ambiguous starting day
@@ -1102,7 +1109,7 @@ class PTTrip(Route):
       # Trip starts and ends before midnight
       return DayObj
     elif nottoday == True and today == False:
-    # Trip does not even on this day of the week
+    # Trip does not even run on this day of the week
       return None
     
   def getTripEndDay(self, DayObj):
@@ -1145,6 +1152,10 @@ class PTTrip(Route):
         # I don't know how prevalent this is, so for now I'll make it
         # an exception, and address it conclusively if it arises.
         # If it arises, making it return "today" should work okay-ish.
+        # Alternatively, this could return two objects, one with it
+        # ending "today" and one with it ending "tomorrow".
+        # The latter case will require additional checks regarding
+        # duplicates.
         raise Exception
       elif (ending[0] == 1 and ending[1] == 1) or (ending[1] and ending[2] == 1):
         # Also an ambiguous ending day
@@ -1168,7 +1179,7 @@ class PTTrip(Route):
       # Trip starts and ends before midnight
       return DayObj
     elif nottoday == True and today == False:
-    # Trip does not even on this day of the week
+    # Trip does not even run on this day of the week
       return None
       
   def doesTripRunOn(self, DayObj):
@@ -1878,7 +1889,7 @@ if __name__ == '__main__':
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetime.datetime(2014, 1, 4)) # (2013, 12, 8)
   for T in Route(myDB, "WBAO001O").getTripsInDayOnRoute(myDay):
-    print T.getTripStartTime(myDay), "\t", T.getTripEndTime(myDay), "\t", T.trip_id
+    print type(T.getTripStartTime(myDay)), "\t", T.getTripEndTime(myDay), "\t", T.trip_id
   print ""
   print ""
   ################################################################################
