@@ -256,8 +256,9 @@ class Day(Database):
     # Get the relative "tomorrow" (useful for methods checking if a service is offered on a given day, because it gives the upper limit)
     tomorrowObj = self.datetimeObj + datetime.timedelta(days=1)
     self.tomorrow = tomorrowObj.isoformat(' ') # "2013-11-07 00:00:000"
+    self.tomorrowObj = tomorrowObj
 
-    # Get the relative "yesterday" (useful for methods checking post-midnight
+    # Get the relative "yesterday" (useful for methods checking post-midnight services)
     yesterdayObj = self.datetimeObj - datetime.timedelta(days=1)
     self.yesterdayISO = yesterdayObj.isoformat(' ')
     self.yesterdayObj = yesterdayObj
@@ -1001,7 +1002,11 @@ class PTTrip(Route):
       q = Template('SELECT arrival_time FROM stop_times_amended WHERE trip_id = "$trip_id" ORDER BY stop_sequence ASC')
       query = q.substitute(trip_id = self.trip_id)
       self.cur.execute(query)
-      return self.cur.fetchall()[0][0]
+      starttime = self.cur.fetchall()[0][0].split(":")
+      starttime[2] = starttime[2].split(".")
+      startday = self.getTripStartDay(DayObj)
+      starttime = startday.datetimeObj.combine(startday.datetimeObj, datetime.time(int(starttime[0]), int(starttime[1]), int(starttime[2][0]), int(starttime[2][1])))
+      return starttime
     else:
       return None
       
@@ -1017,7 +1022,11 @@ class PTTrip(Route):
       q = Template('SELECT departure_time FROM stop_times_amended WHERE trip_id = "$trip_id" ORDER BY stop_sequence ASC')
       query = q.substitute(trip_id = self.trip_id)
       self.cur.execute(query)
-      return self.cur.fetchall()[-1][0]
+      endtime = self.cur.fetchall()[-1][0].split(":")
+      endtime[2] = endtime[2].split(".")
+      endday = self.getTripEndDay(DayObj)
+      endtime = endday.datetimeObj.combine(endday.datetimeObj, datetime.time(int(endtime[0]), int(endtime[1]), int(endtime[2][0]), int(endtime[2][1])))
+      return endtime
     else:
       return None
     
@@ -1036,6 +1045,9 @@ class PTTrip(Route):
     
     NOTE: This does not check whether a trip actually ran on a given
     day (indeed, this is an input to that check).
+    
+    Exceptions are raised if the end day of the trip is ambiguous (as is
+    the case for some (but not all) trips that progress through midnight.
     '''
     q = Template('SELECT DISTINCT $DOW FROM stop_times_amended WHERE trip_id = "$trip_id"')
     query = q.substitute(DOW = DayObj.dayOfWeekStr, trip_id = self.trip_id)
@@ -1047,18 +1059,118 @@ class PTTrip(Route):
       elif indication[0] == 1:
         today = True
       else:
-        raise CustomException("calendar_date exceptions must be in [1, 2]")
+        raise CustomException("calendar_date exceptions must be in [0, 1]")
     if nottoday == True and today == True:
       # Trip runs through a midnight period
-      # The trip began "yesterday"
-      return Day(self.database, DayObj.yesterdayObj)
+      # Now need to find whether  it ends "today" (i.e. it started
+      # "yesterday") or "tomorrow" (i.e. it started "today")
+      # This can be ambiguous.
+      yesterday = Day(self.database, DayObj.yesterdayObj)
+      today = DayObj.dayOfWeekStr
+      tomorrow = Day(self.database, DayObj.tomorrowObj)
+      q = Template('SELECT $yesterday, $today, $tomorrow FROM stop_times_amended WHERE trip_id = "$trip_id" ORDER BY stop_sequence ASC')
+      query = q.substitute(yesterday = yesterday.dayOfWeekStr, today = today, tomorrow = tomorrow.dayOfWeekStr, trip_id = self.trip_id)
+      self.cur.execute(query)
+      beginning = self.cur.fetchall()[0] # The pattern for whether the last stop of the trip occurs yesterday, today and tomorrow (0 or 1 for each)
+      
+      if beginning[0] == 1 and beginning[1] == 1 and beginning[2] == 1:
+        # If the trip starts at the same time yesterday, today and
+        # tomorrow, then it is ambiguous as to when it starts.
+        # I don't know how prevalent this is, so for now I'll make it
+        # an exception, and address it conclusively if it arises.
+        # If it arises, making it return "today" should work okay-ish.
+        raise Exception
+      elif (beginning[0] == 1 and beginning[1] == 1) or (beginning[1] and beginning[2] == 1):
+        # Also an ambiguous starting day
+        print beginning, query
+        raise Exception
+      elif beginning[0] == 1 and beginning[1] == 0:
+        # Not ambiguous, it starts "yesterday"
+        return yesterday
+      elif beginning[0] == 0 and beginning[1] == 1:
+        # Not ambiguous, it starts "today"
+        return DayObj
+      elif beginning[1] == 1 and beginning[2] == 1:
+        # Erroneous, the trip can't start "tomorrow" if it is running "today"
+        print beginning, query
+        raise Exception
+      else:
+        print beginning, query
+        raise Exception
+        
     elif nottoday == False and today == True:
       # Trip starts and ends before midnight
       return DayObj
     elif nottoday == True and today == False:
     # Trip does not even on this day of the week
       return None
-
+    
+  def getTripEndDay(self, DayObj):
+    '''
+    See PTTrip.etTripStartDay(DayObj)
+    This method uses the same parameters, but returns a Day object repr-
+    esenting the day the trip ended (which can be the same as DayObj, or
+    the day after it).
+    
+    Exceptions are raised if the end day of the trip is ambiguous (as is
+    the case for some (but not all) trips that progress through midnight.
+    '''
+    q = Template('SELECT DISTINCT $DOW FROM stop_times_amended WHERE trip_id = "$trip_id"')
+    query = q.substitute(DOW = DayObj.dayOfWeekStr, trip_id = self.trip_id)
+    self.cur.execute(query)
+    nottoday, today = False, False
+    for indication in self.cur.fetchall():
+      if indication[0] == 0:
+        nottoday = True
+      elif indication[0] == 1:
+        today = True
+      else:
+        raise CustomException("calendar_date exceptions must be in [0, 1]")
+    if nottoday == True and today == True:
+      # Trip runs through a midnight period
+      # Now need to find whether  it ends "today" (i.e. it started
+      # "yesterday") or "tomorrow" (i.e. it started "today")
+      # This can be ambiguous.
+      yesterday = Day(self.database, DayObj.yesterdayObj)
+      today = DayObj.dayOfWeekStr
+      tomorrow = Day(self.database, DayObj.tomorrowObj)
+      q = Template('SELECT $yesterday, $today, $tomorrow FROM stop_times_amended WHERE trip_id = "$trip_id" ORDER BY stop_sequence ASC')
+      query = q.substitute(yesterday = yesterday.dayOfWeekStr, today = today, tomorrow = tomorrow.dayOfWeekStr, trip_id = self.trip_id)
+      self.cur.execute(query)
+      ending = self.cur.fetchall()[-1] # The pattern for whether the last stop of the trip occurs yesterday, today and tomorrow (0 or 1 for each)
+      
+      if ending[0] == 1 and ending[1] == 1 and ending[2] == 1:
+        # If the trip ends at the same time yesterday, today and
+        # tomorrow, then it is ambiguous as to when it ends.
+        # I don't know how prevalent this is, so for now I'll make it
+        # an exception, and address it conclusively if it arises.
+        # If it arises, making it return "today" should work okay-ish.
+        raise Exception
+      elif (ending[0] == 1 and ending[1] == 1) or (ending[1] and ending[2] == 1):
+        # Also an ambiguous ending day
+        print ending, query
+        raise Exception
+      elif ending[1] == 1 and ending[2] == 0:
+        # Not ambiguous, it ends "today"
+        return DayObj
+      elif ending[1] == 0 and ending[2] == 1:
+        # Not ambiguous, it ends "tomorrow"
+        return tomorrow
+      elif ending[0] == 1 and ending[1] == 0:
+        # Erroneous, the trip can't end "yesterday" if it is running "today"
+        print ending, query
+        raise Exception
+      else:
+        print ending, query
+        raise Exception
+      
+    elif nottoday == False and today == True:
+      # Trip starts and ends before midnight
+      return DayObj
+    elif nottoday == True and today == False:
+    # Trip does not even on this day of the week
+      return None
+      
   def doesTripRunOn(self, DayObj):
     '''
     Returns a Boolean to determine if the PTTrip runs on <DayObj>.
@@ -1764,9 +1876,9 @@ if __name__ == '__main__':
   
   ## Testing for addressing post-midnight bug with relevant methods
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 30)) # (2013, 12, 8)
-  for T in Route(myDB, "WBAO130O").getTripsInDayOnRoute(myDay):
-    print T.getTripStartTime(myDay), T.getTripEndTime(myDay)
+  myDay = Day(myDB, datetime.datetime(2014, 1, 4)) # (2013, 12, 8)
+  for T in Route(myDB, "WBAO001O").getTripsInDayOnRoute(myDay):
+    print T.getTripStartTime(myDay), "\t", T.getTripEndTime(myDay), "\t", T.trip_id
   print ""
   print ""
   ################################################################################
