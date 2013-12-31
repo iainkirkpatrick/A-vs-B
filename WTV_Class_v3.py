@@ -63,7 +63,8 @@
 #      > doesTripRunOn(DayObj)           ::Returns a Boolean reporting whether the PTTtrip runs on <DayObj> or not. Considers the exceptions in calendar_dates before deciding, and handles >24h time::
 #      > getRoute()                      ::Returns the Route object representing the route taken on Trip::
 #      > getService()                    ::Returns the PTService object that includes this trip::
-#      > getShapelyLine()                ::Returns a Shapely Line object representing the shape of the trip::
+#      > getShapelyLine()                ::Returns a Shapely LineString object representing the shape of the trip::
+#      > getShapelyLineProjected(source=4326, target=2134) ::Returns a projected Shapely LineString object, derived from self.getShapelyLine, where <source> is the unprojected Shapely LineString GCS, and <target> is the target projection for the output. The defaults are WGS84 (<source>) and NZGD2000 (<target>).
 #      > plotShapelyLine()               ::Uses matplotlib and Shapely to plot the shape of the trip. Does not plot stops (yet?)::
 #      > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
 #      > whereIsVehicle(second, DayObj)  ::Returns a tuple (x, y) or (lon, lat) of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object::
@@ -137,6 +138,8 @@ import numpy as np
 import bokeh.plotting
 
 from shapely.geometry import Point, LineString
+from osgeo import ogr
+from shapely.wkb  import loads
 
 import sqlite3 as dbapi
 db_str = "GTFSSQL_Wellington_20131208_215725.db" # Name of database
@@ -1242,7 +1245,38 @@ class PTTrip(Route):
       return DayObj
     elif nottoday == True and today == False:
     # Trip does not even run on this day of the week
+      return
+      
+  def getTripDuration(self, DayObj):
+    '''
+    Returns the duration of the trip, defined as the time elapsed between
+    the self.getTripStartTime(<DayObj>) and the self.getTripEndTime(<DayObj>).
+    
+    Returns an object of type='datetime.timedelta'. To convert this to
+    seconds, use timedelta.total_seconds()
+    
+    Returns None if the trip does not run on <DayObj>.
+    '''
+    if self.doesTripRunOn(DayObj):
+      return self.getTripEndTime(DayObj) - self.getTripStartTime(DayObj)
+    else:
       return None
+      
+  def getTripSpeed(self, DayObj):
+    '''
+    Returns the average speed for the total length and duration of the trip.
+    Ignores dwelling time (time spent stopped): that is, to be clear,
+    a trip that explicitly includes stopping time in its GTFS scheduling
+    will appear slower than a trip that does not. This is a straightforward
+    calculation that ignores possible embellishments in the calculation.
+    
+    from osgeo import ogr
+    from shapely.wkb  import loads
+    '''
+    seconds = self.getTripDuration(DayObj).total_seconds()
+    sline = self.getShapelyLineProjected()
+    
+    return (seconds, sline)    
       
   def doesTripRunOn(self, DayObj, verbose=False):
     '''
@@ -1447,6 +1481,8 @@ class PTTrip(Route):
   def getShapelyLine(self, precise=True):
     '''
     Returns a Shapely Line object representing the trip.
+    
+    Type=LineString
     '''
     q = Template('SELECT shape_pt_lon, shape_pt_lat FROM shapes WHERE shape_id = "$shape_id" ORDER BY shape_pt_sequence')
     query = q.substitute(shape_id = self.getShapeID())
@@ -1457,16 +1493,36 @@ class PTTrip(Route):
       for vertex in self.cur.fetchall():
         newvertex0 = round(vertex[0], 7) # Restrict it to 7 dp, like the stops have.
         newvertex1 = round(vertex[1], 7)
-        ##vertices.append(vertex)
         vertices.append((newvertex0, newvertex1))
     elif precise == True:
-      for vertex in self.cur.fetchall():
-        vertices.append(vertex)
+      vertices = [vertex for vertex in self.cur.fetchall()]
 
-    line = LineString(vertices)
-
-
-    return line
+    return LineString(vertices)
+    
+  def getShapelyLineProjected(self, source=4326, target=2134):
+    '''
+    Projects self.getShapelyLine from <source> GCS to <target> PCS.
+    
+    2134 = NZGD2000 / UTM zone 59S
+    4326 = WGS84
+    
+    Returns a LineString object.
+    '''
+    # Need to project the shapely line
+    to_epsg=target
+    from_epsg=source
+    
+    to_srs = ogr.osr.SpatialReference()
+    to_srs.ImportFromEPSG(to_epsg)
+    
+    from_srs = ogr.osr.SpatialReference()
+    from_srs.ImportFromEPSG(from_epsg)
+    
+    ogr_geom = ogr.CreateGeometryFromWkb(self.getShapelyLine().wkb)
+    ogr_geom.AssignSpatialReference(from_srs)
+    
+    ogr_geom.TransformTo(to_srs)
+    return loads(ogr_geom.ExportToWkb())]
 
   def plotShapelyLine(self):
     '''
@@ -1971,9 +2027,9 @@ if __name__ == '__main__':
   
   ## Testing for addressing post-midnight bug with relevant methods
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 01)) # (2013, 12, 8)
-  for T in Route(myDB, "WBAO003I").getTripsInDayOnRoute(myDay):
-    print T.getTripStartTime(myDay), "\t", T.getTripEndTime(myDay), "\t", T.trip_id
+  myDay = Day(myDB, datetime.datetime(2013, 12, 10)) # (2013, 12, 8)
+  for T in Route(myDB, "WBAO130O").getTripsInDayOnRoute(myDay):
+    print T.getTripStartTime(myDay), "\t", T.getTripEndTime(myDay), "\t", T.trip_id, "\t", T.getTripDuration(myDay), T.getTripSpeed(myDay)
   print ""
   print ""
   #print myDay.dayOfWeekStr.title(), PTTrip(myDB, "800").getRouteID(), PTTrip(myDB, "800").getTripStartTime(myDay), PTTrip(myDB, "800").getTripEndTime(myDay)
