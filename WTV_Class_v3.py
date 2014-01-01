@@ -82,7 +82,9 @@
 #      > getStopDesc()                   ::Returns the stop_desc, a short but textual name for the stop::
 #      > getLocationType()               ::Returns location_type_desc from the stops table: ["Stop", "Station", "Hail and Ride"]. For Metlink: ["Stop", "Hail and Ride"]::
 #      > getShapelyPoint()               ::Returns a shapely Point object representing the location of the stop::
+#      > getShapelyPointProjected(source=4326, target=2134) ::Returns a Shapely point representing the location of the stop, projectedd from the <source> GCS to the <target> PCS. 2134 = NZGD2000 / UTM zone 59S (default <target>); 4326 = WGS84 (default <source>). Returns a shapely.geometry.point.Point object::
 #      > getStopTime(TripObj)            ::Returns a dictionary of {"stop_sequence":integer, "arrival_time":string, "departure_time":string, "pickup_type_text":string, "drop_off_type_text":string, "shape_dist_traveled":float} at the Stop for a given Trip. Strings are used for arrival_time and departure_time where datetime.time objects would be preferred, because these times can exceed 23:59:59.999999, and so cause a value error if instantiated::
+
 
 # Tasks for next iteration/s:
 #  > KEEP CODE DOCUMENTED THROUGHOUT
@@ -1505,12 +1507,11 @@ class PTTrip(Route):
     '''
     Projects self.getShapelyLine from <source> GCS to <target> PCS.
     
-    2134 = NZGD2000 / UTM zone 59S
-    4326 = WGS84
+    2134 = NZGD2000 / UTM zone 59S (default <target>)
+    4326 = WGS84 (default <source>)
     
     Returns a LineString object.
     '''
-    # Need to project the shapely line
     to_epsg=target
     from_epsg=source
     
@@ -1844,7 +1845,9 @@ class PTTrip(Route):
 
 class Stop(Database):
   '''
-  A stop is a place where a PT vehicle stops and passengers may board or depart. Routes are essentially comprised of an ordered sequence of Stops.
+  A stop is a place where a PT vehicle stops and passengers may board
+  or depart. Routes (and hence PTTrips) are essentially comprised of an
+  ordered sequence of Stops.
   '''
   def __init__(self, database, stop_id):
     '''
@@ -1908,7 +1911,33 @@ class Stop(Database):
     loc = self.cur.fetchall()[0]
     lat, lon = round(loc[0], 7), round(loc[1], 7)
     return Point(lon, lat) # Shapely Point object... try Point.x, Point.y, etc.
-
+    
+  def getShapelyPointProjected(self, source=4326, target=2134):
+    '''
+    Returns a Shapely point representing the location of the stop,
+    projectedd from the <source> GCS to the <target> PCS.
+    
+    2134 = NZGD2000 / UTM zone 59S (default <target>)
+    4326 = WGS84 (default <source>)
+    
+    Returns a shapely.geometry.point.Point object.
+    '''
+    to_epsg=target
+    from_epsg=source
+    
+    to_srs = ogr.osr.SpatialReference()
+    to_srs.ImportFromEPSG(to_epsg)
+    
+    from_srs = ogr.osr.SpatialReference()
+    from_srs.ImportFromEPSG(from_epsg)
+    
+    ogr_geom = ogr.CreateGeometryFromWkb(self.getShapelyPoint().wkb)
+    ogr_geom.AssignSpatialReference(from_srs)
+    
+    ogr_geom.TransformTo(to_srs)
+    print type(loads(ogr_geom.ExportToWkb()))
+    return loads(ogr_geom.ExportToWkb())
+    
   def getStopTime(self, TripObj):
     '''
     Returns a dictionary of:
@@ -2027,6 +2056,7 @@ if __name__ == '__main__':
   myDay.bokehFrequencyByMode(1*60, Show=True)
   '''
   
+  '''
   ## Testing for addressing post-midnight bug with relevant methods
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetime.datetime(2013, 12, 10)) # (2013, 12, 8)
@@ -2035,6 +2065,13 @@ if __name__ == '__main__':
   print ""
   print ""
   #print myDay.dayOfWeekStr.title(), PTTrip(myDB, "800").getRouteID(), PTTrip(myDB, "800").getTripStartTime(myDay), PTTrip(myDB, "800").getTripEndTime(myDay)
+  '''
+  
+  myDatabase = Database(myDB)
+  myDay = Day(myDB, datetime.datetime(2013, 12, 10)) # (2013, 12, 8)
+  myStop = Stop(myDB, "22018")
+  print myStop.getShapelyPoint()
+  print myStop.getShapelyPointProjected()
   ################################################################################
   ################################ End ###########################################
   ################################################################################
