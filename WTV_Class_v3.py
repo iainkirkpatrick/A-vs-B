@@ -64,7 +64,7 @@
 #      > getRoute()                      ::Returns the Route object representing the route taken on Trip::
 #      > getService()                    ::Returns the PTService object that includes this trip::
 #      > getShapelyLine()                ::Returns a Shapely LineString object representing the shape of the trip::
-#      > getShapelyLineProjected(source=4326, target=2134) ::Returns a projected Shapely LineString object, derived from self.getShapelyLine, where <source> is the unprojected Shapely LineString GCS, and <target> is the target projection for the output. The defaults are WGS84 (<source>) and NZGD2000 (<target>).
+#      > getShapelyLineProjected(source=4326, target=2134) ::Returns a projected Shapely LineString object, derived from self.getShapelyLine(), where <source> is the unprojected Shapely LineString GCS, and <target> is the target projection for the output. The defaults are WGS84 (<source>) and NZGD2000 (<target>).
 #      > plotShapelyLine()               ::Uses matplotlib and Shapely to plot the shape of the trip. Does not plot stops (yet?)::
 #      > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
 #      > whereIsVehicle(second, DayObj)  ::Returns a tuple (x, y) or (lon, lat) of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object::
@@ -1272,11 +1272,13 @@ class PTTrip(Route):
     
     from osgeo import ogr
     from shapely.wkb  import loads
-    '''
-    seconds = self.getTripDuration(DayObj).total_seconds()
-    sline = self.getShapelyLineProjected()
     
-    return (seconds, sline)    
+    Returns speed as kilometres per hour.
+    '''
+    hours = self.getTripDuration(DayObj).total_seconds() / 60.0 / 60.0
+    sline_length_KM = self.getShapelyLineProjected().length / 1000.0
+    
+    return sline_length_KM / hours   
       
   def doesTripRunOn(self, DayObj, verbose=False):
     '''
@@ -1522,7 +1524,7 @@ class PTTrip(Route):
     ogr_geom.AssignSpatialReference(from_srs)
     
     ogr_geom.TransformTo(to_srs)
-    return loads(ogr_geom.ExportToWkb())]
+    return loads(ogr_geom.ExportToWkb())
 
   def plotShapelyLine(self):
     '''
@@ -2028,7 +2030,7 @@ if __name__ == '__main__':
   ## Testing for addressing post-midnight bug with relevant methods
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetime.datetime(2013, 12, 10)) # (2013, 12, 8)
-  for T in Route(myDB, "WBAO130O").getTripsInDayOnRoute(myDay):
+  for T in Route(myDB, "WBAO017O").getTripsInDayOnRoute(myDay): # "WBAO130O", "WRAHVL0I"
     print T.getTripStartTime(myDay), "\t", T.getTripEndTime(myDay), "\t", T.trip_id, "\t", T.getTripDuration(myDay), T.getTripSpeed(myDay)
   print ""
   print ""
