@@ -82,9 +82,9 @@
 #      > getStopDesc()                   ::Returns the stop_desc, a short but textual name for the stop::
 #      > getLocationType()               ::Returns location_type_desc from the stops table: ["Stop", "Station", "Hail and Ride"]. For Metlink: ["Stop", "Hail and Ride"]::
 #      > getShapelyPoint()               ::Returns a shapely Point object representing the location of the stop::
-#      > getShapelyPointProjected(source=4326, target=2134) ::Returns a Shapely point representing the location of the stop, projectedd from the <source> GCS to the <target> PCS. 2134 = NZGD2000 / UTM zone 59S (default <target>); 4326 = WGS84 (default <source>). Returns a shapely.geometry.point.Point object::
+#      > getShapelyPointProjected(source=4326, target=2134) ::Returns a Shapely point representing the location of the stop, projected from the <source> GCS to the <target> PCS. 2134 = NZGD2000 / UTM zone 59S (default <target>); 4326 = WGS84 (default <source>). Returns a shapely.geometry.point.Point object::
 #      > getStopTime(TripObj)            ::Returns a dictionary of {"stop_sequence":integer, "arrival_time":string, "departure_time":string, "pickup_type_text":string, "drop_off_type_text":string, "shape_dist_traveled":float} at the Stop for a given Trip. Strings are used for arrival_time and departure_time where datetime.time objects would be preferred, because these times can exceed 23:59:59.999999, and so cause a value error if instantiated::
-
+#      > getStopSnappedToRoute(TripObj)  ::Returns a Shapely.geometry.point.Point object representing the non-overlapping Stop as a Point overlapping (or very, very nearly overlapping) the Route shape of <TripObj>::
 
 # Tasks for next iteration/s:
 #  > KEEP CODE DOCUMENTED THROUGHOUT
@@ -102,8 +102,8 @@
 #
 #
 # Created:            20131107
-# Last Updated:       20131222
-# Comments Updated:   20131222
+# Last Updated:       20140101
+# Comments Updated:   20140101
 #-------------------------------------------------------------------------------
 
 ################################################################################
@@ -140,8 +140,10 @@ import numpy as np
 import bokeh.plotting
 
 from shapely.geometry import Point, LineString
-from osgeo import ogr
-from shapely.wkb  import loads
+from osgeo import ogr # Projecting
+from shapely.wkb  import loads # Projecting
+from math import sqrt # Snapping
+from sys import maxint # Snapping
 
 import sqlite3 as dbapi
 db_str = "GTFSSQL_Wellington_20131208_215725.db" # Name of database
@@ -976,7 +978,7 @@ class Route(Agency):
     query = q.substitute(route_id = self.route_id)
     self.cur.execute(query)
     return Mode(self.database, self.cur.fetchall()[0][0])
-
+    
 class PTTrip(Route):
   '''
   A PTTrip is a discrete trip made by a vehicle.
@@ -1560,18 +1562,17 @@ class PTTrip(Route):
     plt.title(title)
     return plt.show()
 
-  def getStopsInSequence(self):
+  def getStopsInSequence(self, verbose=False):
     '''
     Returns a list of stop objects that the trip uses, in sequence.
     '''
     q = Template('SELECT stop_id FROM stop_times WHERE trip_id = "$trip_id" ORDER BY stop_sequence')
     query = q.substitute(trip_id = self.trip_id)
     self.cur.execute(query)
+    if verbose:
+      print query
 
-    stops = []
-    for stop_time in self.cur.fetchall():
-      stops.append(Stop(self.database, stop_time[0]))
-    return stops
+    return [Stop(self.database, stop[0]) for stop in self.cur.fetchall()]
 
   def whereIsVehicle(self, second, DayObj):
     '''
@@ -1935,7 +1936,6 @@ class Stop(Database):
     ogr_geom.AssignSpatialReference(from_srs)
     
     ogr_geom.TransformTo(to_srs)
-    print type(loads(ogr_geom.ExportToWkb()))
     return loads(ogr_geom.ExportToWkb())
     
   def getStopTime(self, TripObj):
@@ -1975,7 +1975,85 @@ class Stop(Database):
         stop_times.append(stop_time)
       return stop_times # A list of dictionaries
 
+  def getStopSnappedToRoute(self, TripObj, projected=True, verbose=False):
+    '''
+    The Stops listed in the GTFS do not have to intersect the Routes which
+    are essentially defined by them. This method returns a Shapely.geometry
+    Point object representing the location of the Stop when shifted the
+    minimum neccessary distance to intersect the <RouteObj>.
+    
+    Adapted from:
+    http://gis.stackexchange.com/questions/396/nearest-neighbor-between-a-point-layer-and-a-line-layer
+    Date: 20140101
+    '''
+    # Define the line and point of interest
+    if projected == False:
+      stoploc = self.getShapelyPoint()
+      routeline = TripObj.getShapelyLine()
+    elif projected == True:
+      stoploc = self.getShapelyPointProjected()
+      routeline = TripObj.getShapelyLineProjected()
+    
+    # pairs iterator:
+    # http://stackoverflow.com/questions/1257413/1257446#1257446
+    def pairs(lst):
+        i = iter(lst)
+        first = prev = i.next()
+        for item in i:
+            yield prev, item
+            prev = item
+        yield item, first
 
+    # these methods rewritten from the C version of Paul Bourke's
+    # geometry computations:
+    # http://local.wasp.uwa.edu.au/~pbourke/geometry/pointline/
+    def magnitude(p1, p2):
+        vect_x = p2.x - p1.x
+        vect_y = p2.y - p1.y
+        return sqrt(vect_x**2 + vect_y**2)
+
+    def intersect_point_to_line(point, line_start, line_end):
+        line_magnitude =  magnitude(line_end, line_start)
+        u = ((point.x - line_start.x) * (line_end.x - line_start.x) +
+             (point.y - line_start.y) * (line_end.y - line_start.y)) \
+             / (line_magnitude ** 2)
+
+        # closest point does not fall within the line segment, 
+        # take the shorter distance to an endpoint
+        if u < 0.00001 or u > 1:
+            ix = magnitude(point, line_start)
+            iy = magnitude(point, line_end)
+            if ix > iy:
+                return line_end
+            else:
+                return line_start
+        else:
+            ix = line_start.x + u * (line_end.x - line_start.x)
+            iy = line_start.y + u * (line_end.y - line_start.y)
+            return Point([ix, iy])
+            
+    def attemptSnap(line, point):
+      min_dist = maxint
+      for seg_start, seg_end in pairs(list(routeline.coords)[:-1]):
+          line_start = Point(seg_start)
+          line_end = Point(seg_end)
+
+          intersection_point = intersect_point_to_line(point, line_start, line_end)
+          cur_dist =  magnitude(point, intersection_point)
+
+          if cur_dist < min_dist:
+              min_dist = cur_dist
+              nearest_point = intersection_point
+      return nearest_point
+    
+    if stoploc.intersects(routeline) == False:
+      stoploc = attemptSnap(routeline, stoploc)
+      
+    if verbose:
+      print "Closest point found at: %s, with a distance of %.2f units." % \
+       (intersection_point, min_dist)
+       
+    return stoploc
 
 if __name__ == '__main__':
   ################################################################################
@@ -2035,19 +2113,27 @@ if __name__ == '__main__':
   dur("myDay.animateDay(0, 86399)")
   '''
 
-  '''
+  
   ## Trying to fix the placement problem. See the QGIS file
   myDatabase = Database(myDB)
   myTrip = PTTrip(myDB, "16")
-  string = "LINESTRING ("
-  print myTrip.getShapelyLine()
-  myTrip.cur.execute('SELECT * FROM intervals WHERE trip_id = "16"')
-  print "Seconds, Point;"
-  for i in myTrip.cur.fetchall():
-    print "%i, POINT (%.7f %.7f);" % (i[1], i[2], i[3])
+  print myTrip.getShapelyLineProjected()
+  print ""
+  print "stop_id, WKT_point;"
+  for stop in myTrip.getStopsInSequence():
+    #print stop.getShapelyPointProjected().coords[:],
+    print "%s, POINT (%.9f %.9f);" % (stop.stop_id, stop.getStopSnappedToRoute(myTrip, projected=True).x, stop.getStopSnappedToRoute(myTrip, projected=True).y)
+      
+  #myTrip.cur.execute('SELECT * FROM intervals WHERE trip_id = "16"')
+  #print "Seconds, Point;"
+  #for i in myTrip.cur.fetchall():
+    #print "%i, POINT (%.7f %.7f);" % (i[1], i[2], i[3])
+    
+  #print ""
+  #print myTrip.getShapelyLineProjected()
   #for stop in myTrip.getStopsInSequence():
     #print stop.getShapelyPoint()
-  '''
+  
 
   '''
   ## Testing bokehFrequencyByMode
@@ -2067,11 +2153,14 @@ if __name__ == '__main__':
   #print myDay.dayOfWeekStr.title(), PTTrip(myDB, "800").getRouteID(), PTTrip(myDB, "800").getTripStartTime(myDay), PTTrip(myDB, "800").getTripEndTime(myDay)
   '''
   
+  '''
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetime.datetime(2013, 12, 10)) # (2013, 12, 8)
-  myStop = Stop(myDB, "22018")
-  print myStop.getShapelyPoint()
-  print myStop.getShapelyPointProjected()
+  myTrip = PTTrip(myDB, 754)
+  #print myTrip.getShapelyLineProjected().coords[:]
+  for S in myTrip.getStopsInSequence():
+    print S.getStopSnappedToRoute(myTrip, projected=False).x, S.getStopSnappedToRoute(myTrip, projected=False).y
+  '''
   ################################################################################
   ################################ End ###########################################
   ################################################################################
