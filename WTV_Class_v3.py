@@ -83,8 +83,8 @@
 #      > getLocationType()               ::Returns location_type_desc from the stops table: ["Stop", "Station", "Hail and Ride"]. For Metlink: ["Stop", "Hail and Ride"]::
 #      > getShapelyPoint()               ::Returns a shapely Point object representing the location of the stop::
 #      > getShapelyPointProjected(source=4326, target=2134) ::Returns a Shapely point representing the location of the stop, projected from the <source> GCS to the <target> PCS. 2134 = NZGD2000 / UTM zone 59S (default <target>); 4326 = WGS84 (default <source>). Returns a shapely.geometry.point.Point object::
-#      > getStopTime(TripObj)            ::Returns a dictionary of {"stop_sequence":integer, "arrival_time":string, "departure_time":string, "pickup_type_text":string, "drop_off_type_text":string, "shape_dist_traveled":float} at the Stop for a given Trip. Strings are used for arrival_time and departure_time where datetime.time objects would be preferred, because these times can exceed 23:59:59.999999, and so cause a value error if instantiated::
-#      > getStopSnappedToRoute(TripObj)  ::Returns a Shapely.geometry.point.Point object representing the non-overlapping Stop as a Point overlapping (or very, very nearly overlapping) the Route shape of <TripObj>::
+#      > getStopTime(TripObj, DayObj=None, new=True) ::if new==False: Returns a dictionary of {"stop_sequence":integer, "arrival_time":string, "departure_time":string, "pickup_type_text":string, "drop_off_type_text":string, "shape_dist_traveled":float} at the Stop for a given Trip. Strings are used for arrival_time and departure_time where datetime.time objects would be preferred, because these times can exceed 23:59:59.999999, and so cause a value error if instantiated. elif new==True: Returns a list of tuples of date+time objects representing the day-time(s) when the <TripObj> arrives and departs self (Stop), using <DayObj> as seed::
+#      > getStopSnappedToRoute(TripObj)  ::Returns a Shapely.geometry.point.Point object representing the originally-non-overlapping Stop as a Point overlapping (or very, very nearly overlapping) the Route shape of <TripObj>::
 
 # Tasks for next iteration/s:
 #  > KEEP CODE DOCUMENTED THROUGHOUT
@@ -1717,7 +1717,7 @@ class PTTrip(Route):
       # Infer the time range of the trip
       stops = self.getStopsInSequence()
       start_time, end_time = stops[0], stops[-1]
-      start_time, end_time = start_time.getStopTime(self), end_time.getStopTime(self)
+      start_time, end_time = start_time.getStopTime(self, new=False), end_time.getStopTime(self, new=False)
 
       if len(start_time) == 1 and len(end_time) == 1:
         # Then the route does not end where it starts, like most routes
@@ -1938,7 +1938,7 @@ class Stop(Database):
     ogr_geom.TransformTo(to_srs)
     return loads(ogr_geom.ExportToWkb())
     
-  def getStopTime(self, TripObj):
+  def getStopTime(self, TripObj, DayObj=None, new=True,):
     '''
     Returns a dictionary of:
     {"stop_sequence":integer,
@@ -1954,28 +1954,79 @@ class Stop(Database):
     TODO: What about trips with the same trip_id that visit the same stop
     more than once?
     '''
-    q = Template('SELECT stop_sequence, arrival_time, departure_time, pickup_type_text, drop_off_type_text, shape_dist_traveled FROM stop_times WHERE stop_id = "$stop_id" and trip_id = "$trip_id"')
-    query = q.substitute(stop_id = self.stop_id, trip_id = TripObj.trip_id)
-    self.cur.execute(query)
-    stops = self.cur.fetchall()
-    if len(stops) == 1:
-      # Then the trip only visits that stop once in its trip
-      stop_time = stops[0]
-      stop_time = {"stop_sequence":int(stop_time[0]), "arrival_time":stop_time[1], "departure_time":stop_time[2], "pickup_type_text":stop_time[3], "drop_off_type_text":stop_time[4], "shape_dist_traveled":float(stop_time[5])}
-      return stop_time
-    else:
-      # Then the trip makes multiple visits to that stop in its trip
-      # e.g. a loop that starts and stops at the same place
-      # Such as trips 13, 14 and 15 (N001 Wellington),
-      # or a trip that goes over midnight in two consecutive nights.
-      # So return a list of stop_times (a list of dictionaries)
-      stop_times = []
-      for stop_time in stops:
+    def prepare_tuple(fetchall, DayObj):
+      retlist = []
+      for stop in fetchall:
+        stop_time = stop
+        arrival_time, departure_time = stop_time[0], stop_time[1] # Raw strings
+        arrival_hour, arrival_min, arrival_sec, arrival_ssec = arrival_time[0:2], arrival_time[3:5], arrival_time[6:8], arrival_time[9:]
+        departure_hour, departure_min, departure_sec, departure_ssec = departure_time[0:2], departure_time[3:5], departure_time[6:8], departure_time[9:]
+        startday = TripObj.getTripStartDay(DayObj)
+        if isinstance(startday, Day):
+          if int(arrival_hour) < 24:
+            # Then it is not post-midnight
+            stop_arrival_datetime = startday.datetimeObj.combine(startday.datetimeObj, datetime.time(int(arrival_hour), int(arrival_min), int(arrival_sec), int(arrival_ssec)))
+          elif int(arrival_hour) >= 24:
+            # Time needs to be next day as well
+            arrival_hour = str(int(arrival_hour) - 24)
+            if len(arrival_hour) < 2:
+              arrival_hour = "0" + arrival_hour
+            nextday = DayObj.tomorrowObj
+            stop_arrival_datetime = nextday.combine(nextday, datetime.time(int(arrival_hour), int(arrival_min), int(arrival_sec), int(arrival_ssec)))
+          if int(departure_hour) < 24:
+            stop_departure_datetime = startday.datetimeObj.combine(startday.datetimeObj, datetime.time(int(departure_hour), int(departure_min), int(departure_sec), int(departure_ssec)))
+          elif int(departure_hour) >= 24:
+            departure_hour = str(int(departure_hour) - 24)
+            if len(departure_hour) < 2:
+              departure_hour = "0" + departure_hour
+            if nextday not in locals():
+              nextday = DayObj.tomorrowObj
+            stop_departure_datetime = nextday.combine(nextday, datetime.time(int(departure_hour), int(departure_min), int(departure_sec), int(departure_ssec)))
+          retlist.append((stop_arrival_datetime, stop_departure_datetime))
+      return retlist
+    
+    if new == False:
+      q = Template('SELECT stop_sequence, arrival_time, departure_time, pickup_type_text, drop_off_type_text, shape_dist_traveled FROM stop_times WHERE stop_id = "$stop_id" and trip_id = "$trip_id"')
+      query = q.substitute(stop_id = self.stop_id, trip_id = TripObj.trip_id)
+      self.cur.execute(query)
+      stops = self.cur.fetchall()
+      if len(stops) == 1:
+        # Then the trip only visits that stop once in its trip
+        stop_time = stops[0]
         stop_time = {"stop_sequence":int(stop_time[0]), "arrival_time":stop_time[1], "departure_time":stop_time[2], "pickup_type_text":stop_time[3], "drop_off_type_text":stop_time[4], "shape_dist_traveled":float(stop_time[5])}
-        stop_times.append(stop_time)
-      return stop_times # A list of dictionaries
+        return stop_time
+      else:
+        # Then the trip makes multiple visits to that stop in its trip
+        # e.g. a loop that starts and stops at the same place
+        # Such as trips 13, 14 and 15 (N001 Wellington),
+        # or a trip that goes over midnight in two consecutive nights.
+        # So return a list of stop_times (a list of dictionaries)
+        stop_times = []
+        for stop_time in stops:
+          stop_time = {"stop_sequence":int(stop_time[0]), "arrival_time":stop_time[1], "departure_time":stop_time[2], "pickup_type_text":stop_time[3], "drop_off_type_text":stop_time[4], "shape_dist_traveled":float(stop_time[5])}
+          stop_times.append(stop_time)
+        return stop_times # A list of dictionaries
+    else:
+      # New version
+      # I want it to return simply a tuple of stop arrival date-time,
+      # and stop departure date-time, in the same format as the trip
+      # start and end time
+      # 1. Check if trip runs on DayObj
+      if TripObj.doesTripRunOn(DayObj):
+        # 2. Get the raw arrival and departure times
+        q = Template('SELECT arrival_time, departure_time FROM stop_times WHERE stop_id = "$stop_id" and trip_id = "$trip_id" ORDER BY stop_sequence ASC')
+        query = q.substitute(stop_id = self.stop_id, trip_id = TripObj.trip_id)
+        print query
+        self.cur.execute(query)
+        stops = self.cur.fetchall()
+        # Returns a list, because in some cases there are trips that
+        # visit the same stop twice (or potentially more) in one trip:
+        # loop routes.
+        return prepare_tuple(stops, DayObj)
+        
+            
 
-  def getStopSnappedToRoute(self, TripObj, projected=True, verbose=False):
+  def getStopSnappedToRoute(self, TripObj, projected=True):
     '''
     The Stops listed in the GTFS do not have to intersect the Routes which
     are essentially defined by them. This method returns a Shapely.geometry
@@ -2048,10 +2099,6 @@ class Stop(Database):
     
     if stoploc.intersects(routeline) == False:
       stoploc = attemptSnap(routeline, stoploc)
-      
-    if verbose:
-      print "Closest point found at: %s, with a distance of %.2f units." % \
-       (intersection_point, min_dist)
        
     return stoploc
 
@@ -2113,7 +2160,7 @@ if __name__ == '__main__':
   dur("myDay.animateDay(0, 86399)")
   '''
 
-  
+  '''
   ## Trying to fix the placement problem. See the QGIS file
   myDatabase = Database(myDB)
   myTrip = PTTrip(myDB, "16")
@@ -2133,7 +2180,7 @@ if __name__ == '__main__':
   #print myTrip.getShapelyLineProjected()
   #for stop in myTrip.getStopsInSequence():
     #print stop.getShapelyPoint()
-  
+  '''
 
   '''
   ## Testing bokehFrequencyByMode
@@ -2161,6 +2208,13 @@ if __name__ == '__main__':
   for S in myTrip.getStopsInSequence():
     print S.getStopSnappedToRoute(myTrip, projected=False).x, S.getStopSnappedToRoute(myTrip, projected=False).y
   '''
+  
+  myDatabase = Database(myDB)
+  myDay = Day(myDB, datetime.datetime(2013, 12, 15)) # (2013, 12, 8)
+  myTrip = PTTrip(myDB, 13)
+  myStop = Stop(myDB, "22394")
+  print myStop.getStopTime(myTrip, myDay, new=True)
+  
   ################################################################################
   ################################ End ###########################################
   ################################################################################
