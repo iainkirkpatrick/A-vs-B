@@ -224,7 +224,7 @@ def createGTSFtoSQL_database(DBName_str):
   # Add a trips table
   cur.execute('CREATE TABLE trips(route_id TEXT REFERENCES routes, service_id INTEGER, trip_id INTEGER, trip_headsign TEXT, trip_short_name TEXT, direction_id INTEGER, direction_id_text TEXT, block_id INTEGER, shape_id TEXT REFERENCES shapes(shape_id), wheelchair_accessible INTEGER, wheelchair_accessible_text TEXT)')
 
-  # Add a intervals table
+  # Add an intervals table
   cur.execute('CREATE TABLE intervals(trip_id INTEGER REFERENCES trips(trip_id), date DATETIME, lat FLOAT, lon FLOAT, route_type_desc TEXT REFERENCES routes(route_type_desc), pickup_type_text TEXT REFERENCES stop_times(pickup_type_text), drop_off_type_text TEXT REFERENCES stop_times(drop_off_type_text), agency_id TEXT REFERENCES agency(agency_id), route_id TEXT REFERENCES routes(route_id), shape_id TEXT REFERENCES shapes(shape_id))')
 
   # Add a stop_times_amended table that doesn't store time beyond 23:59:59.999 like the GTFS does
