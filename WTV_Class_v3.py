@@ -67,7 +67,7 @@
 #      > getShapelyLineProjected(source=4326, target=2134) ::Returns a projected Shapely LineString object, derived from self.getShapelyLine(), where <source> is the unprojected Shapely LineString GCS, and <target> is the target projection for the output. The defaults are WGS84 (<source>) and NZGD2000 (<target>).
 #      > plotShapelyLine()               ::Uses matplotlib and Shapely to plot the shape of the trip. Does not plot stops (yet?)::
 #      > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
-#      > whereIsVehicle(DayObj, second=None, single=False) ::Returns a shapely Point of the location of the vehicle at a given moment in time, <second>. <second> is a datetime.time object. <DayObj> is a Day object. If single==False, leave second as None; an ordered list of (second, Point) tuples will be returned for the entire range of the trip in <DayObj>::
+#      > whereIsVehicle(DayObj)          ::<DayObj> is a Day object. Returns an ordered list of (second, shapely.geometry.Point) for the entire range of the trip in <DayObj>, every second it runs::
 #      > intervalByIntervalPosition(DayObj, interval=1) ::WRITES TO THE DATABASE about the positions of every vehicle on <DayObj> at the temporal resolution of <interval>. Does not write duplicates. Make sure to only pass it PTTrips that doesTripRunOn(DayObj) == True::
 #      > getShapeID()                    ::Each trip has a particular shape, this returns the ID of it (str)::
 #      > getTripStartDay(DayObj)         ::The start day of a PTTrip is either the given <DayObj>, or the day before it (or neither if it doesn't run). This method returns <DayObj> if the trip starts on <DayObj>, the Day BEFORE <DayObj> if that's right, and None in the third case. Raises an exception in the case of ambiguity::
@@ -1578,23 +1578,12 @@ class PTTrip(Route):
 
     return [Stop(self.database, stop[0]) for stop in self.cur.fetchall()]
 
-  def whereIsVehicle(self, DayObj, second=None, single=False):
+  def whereIsVehicle(self, DayObj):
     '''
-    Returns an XY position of the vehicle at a given moment in time (<second>) on <dayObj>.
-    If the trip does not run, is yet to run, or has already run, it returns None.
-    Vehicle locations are "known" at scheduled arrivals, otherwise position is interpolated along their shape.
-
-    <second> is an integer representing the seconds since
-    the beginning of <DayObj>.
-    <second> is optional because it only applies if <single> == False.
-
-    If single == False:
-      Returns a shapely.geometry.Point object.
-    Else:
-      Returns a list of integers and shapely.geometry.Point,
-      where the integers in the list aew equal to the seconds since
-      midnight, and the value indicating the position of the vehicle at
-      that point in time.
+    If self (trip) runs on <DayObj>, returns a list of tuples of integers
+    and shapely.geomoetry.Point objects representing the seconds since
+    midnight on <DayObj> and the position of the vehicle along its route
+    shape.
     '''
     def scale_factor(line, nominallength):
       '''
@@ -1707,154 +1696,77 @@ class PTTrip(Route):
         fraction = 0.0
       return segment.interpolate(fraction, normalized=True)
     
-    def getpositionSingle(Trip, Second, Second_as_Second, Overall_Start, Overall_End, Stop_Times):
-      '''
-      Returns the position of a Trip at a Second.
-      '''
+    # Begin method proper
+    positionlist = []
+    
+    factor = 10 # The multiplication factor, idiosyncratic to the GTFS
+    #!! Use <factor> to adjust the shape_dist_traveled column in stop_times
+    
+    # Things that only need to be done once
+    ## Get all the stops that the trip visits
+    q = Template('SELECT ST.*, S.stop_lat, S.stop_lon FROM stop_times AS ST JOIN stops AS S ON S.stop_id = ST.stop_id WHERE trip_id = $trip_id ORDER BY stop_sequence')
+    query = q.substitute(trip_id = self.trip_id)
+    self.cur.execute(query)
+    Stop_Times = self.cur.fetchall()
+    line = self.getShapelyLineProjected()
+    nominallength = Stop_Times[-1][10] * factor
+    scalefactor = scale_factor(line, nominallength)
+    Overall_Start = self.getTripStartTime(DayObj)
+    Overall_End = self.getTripEndTime(DayObj)
+    
+    # Stop arrival/departures
+    stoparrivedepart, seencount, stopdistalongs, stopobjs = {}, {}, [], []
+    for n, stop in enumerate(Stop_Times):
+      stopobj = Stop(self.database, stop[3])
+      stopobjs.append(stopobj)
+      try:
+        seen = seencount[stopobj.stop_id]
+        seencount[stopobj.stop_id] = seencount[stopobj.stop_id] + 1
+      except KeyError:
+        seen = 0
+        seencount[stopobj.stop_id] = 1
+      stoparrivedepart[n] = stopobj.getStopTime(self, DayObj)[seen]
+      stopdistalongs.append(min((stopobj.getGivenDistanceAlong(self, n+1, factor=factor) * scalefactor), (nominallength*scalefactor)))
+    segmentedline = cutLineAtMultiple(line, stopdistalongs)
+    for second in range(0,24*60*60,1): # 12am to 11.59pm on <DayObj>, at 1 second intervals
+      Second_as_Second = second
+      Second = DayObj.datetimeObj + datetime.timedelta(seconds=second)
       if Second >= Overall_Start and Second <= Overall_End:
         # Then the trip is operating at <Second>
-        # Calculate the scale factor
-        line = Trip.getShapelyLineProjected()
-        nominallength = Stop_Times[-1][10] * factor
-        scalefactor = scale_factor(line, nominallength)
-        
         # Now, refine the precise position using scheduled times.
         counts = {} # To keep a count of how many times a trip visits a stop
         for n, stop in enumerate(Stop_Times):
-          # Get the stop object
-          stopobj = Stop(Trip.database, stop[3])
-          # Increase count
-          try:
-            counts[stop[3]] = counts[stop[3]] + 1
-          except:
-            counts[stop[3]] = 1
-          index = counts[stop[3]]
+          segment = segmentedline[n] # The segment of the line from <stop> to its next stop (and no further)
+          stopobj = stopobjs[n]
           # LIST OF TUPLE(S), each tuple representing an arrival/departure at the stop
-          # [index-1] grabs the right one for consideration, when there can be multiple visits
-          arrival_departure = stopobj.getStopTime(Trip, DayObj)[index-1] # TUPLE
+          arrival_departure = stoparrivedepart[n] # TUPLE
           if Second == arrival_departure[0] or Second == arrival_departure[1] or (Second > arrival_departure[0] and Second < arrival_departure[1]):
             # Trip is arriving, departing or dwelling at stop
             ## return stopobj.getStopSnappedToRoute(Trip, projected=True) ## Logically, this is sensible.
             ## But the interpolate on a projected line seems to be off.
             ## So instead, I interpolate the position at a stop in the same manner I would for a betwee-stop point
-            stop1distalong = min((stopobj.getGivenDistanceAlong(Trip, n+1, factor=factor) * scalefactor), (nominallength*scalefactor))
             relativeseconds = Second_as_Second - (arrival_departure[1] - DayObj.datetimeObj).total_seconds()
-            return interpolatedposition(stop1distalong, arrival_departure[0], stop1distalong, arrival_departure[0], line, relativeseconds)
+            positionlist.append((second, interpolatedOnSegment(segment, arrival_departure[0], arrival_departure[0], relativeseconds)))
           elif Second > arrival_departure[1]:
             # elif second is after departing the current stop (but still in trip's time range)
-            next_stopobj = Stop(Trip.database, Stop_Times[n+1][3])
+            next_stopobj = stopobjs[n+1]
             try:
               counts[Stop_Times[n+1][3]] = counts[Stop_Times[n+1][3]] + 1
             except:
               counts[Stop_Times[n+1][3]] = 1
             index = counts[Stop_Times[n+1][3]]
             counts[Stop_Times[n+1][3]] = counts[Stop_Times[n+1][3]] - 1
-            next_arrival = next_stopobj.getStopTime(Trip, DayObj)[index-1][0]
+            next_arrival = stoparrivedepart[n+1][index-1]
             if Second < next_arrival:
               # Then second is between stop and the next stop
-              # Need to interpolate its position
-              stop1distalong = min((stopobj.getGivenDistanceAlong(Trip, n+1, factor=factor) * scalefactor), (nominallength*scalefactor))
-              stop2distalong = min((next_stopobj.getGivenDistanceAlong(Trip, n+2, factor=factor) * scalefactor), (nominallength*scalefactor))
               # Need the relative seconds: <second> rendered as time passed since trip departed stop
               relativeseconds = Second_as_Second - (arrival_departure[1] - DayObj.datetimeObj).total_seconds()
-              return interpolatedposition(stop1distalong, arrival_departure[0], stop2distalong, next_arrival, line, relativeseconds)
+              # Need to interpolate its position
+              positionlist.append((second, interpolatedOnSegment(segment, arrival_departure[0], next_arrival, relativeseconds)))
           # Move to next [n, stop] if no match found
       else:
-        return None
-        
-    def getPositionMultiple(Trip, Overall_Start, Overall_End, Stop_Times):
-      '''
-      Returns a list of positions of a Trip, for every second in the
-      trip's operation. Format:
-      [(second, shapelyPoint), (second, shapelyPoint), ...]
-      Where second is a second referring to post-midnight time in <DayObj>
-      '''
-      positionlist = []
-      
-      # Things that only need to be done once
-      line = Trip.getShapelyLineProjected()
-      nominallength = Stop_Times[-1][10] * factor
-      scalefactor = scale_factor(line, nominallength)
-      
-      # Stop arrival/departures
-      stoparrivedepart = {}
-      stopdistalongs, stopobjs = [], []
-      seencount = {}
-      for n, stop in enumerate(Stop_Times):
-        stopobj = Stop(Trip.database, stop[3])
-        stopobjs.append(stopobj)
-        try:
-          seen = seencount[stopobj.stop_id]
-          seencount[stopobj.stop_id] = seencount[stopobj.stop_id] + 1
-        except KeyError:
-          seen = 0
-          seencount[stopobj.stop_id] = 1
-        stoparrivedepart[n] = stopobj.getStopTime(Trip, DayObj)[seen]
-        stopdistalongs.append(min((stopobj.getGivenDistanceAlong(Trip, n+1, factor=factor) * scalefactor), (nominallength*scalefactor)))
-      segmentedline = cutLineAtMultiple(line, stopdistalongs)
-      for second in range(0,24*60*60,1): # 12am to 11.59pm on <DayObj>, at 1 second intervals
-        Second_as_Second = second
-        Second = DayObj.datetimeObj + datetime.timedelta(seconds=second)
-        if Second >= Overall_Start and Second <= Overall_End:
-          # Then the trip is operating at <Second>
-          # Now, refine the precise position using scheduled times.
-          counts = {} # To keep a count of how many times a trip visits a stop
-          for n, stop in enumerate(Stop_Times):
-            segment = segmentedline[n] # The segment of the line from <stop> to its next stop (and no further)
-            stopobj = stopobjs[n]
-            # LIST OF TUPLE(S), each tuple representing an arrival/departure at the stop
-            arrival_departure = stoparrivedepart[n] # TUPLE
-            if Second == arrival_departure[0] or Second == arrival_departure[1] or (Second > arrival_departure[0] and Second < arrival_departure[1]):
-              # Trip is arriving, departing or dwelling at stop
-              ## return stopobj.getStopSnappedToRoute(Trip, projected=True) ## Logically, this is sensible.
-              ## But the interpolate on a projected line seems to be off.
-              ## So instead, I interpolate the position at a stop in the same manner I would for a betwee-stop point
-              relativeseconds = Second_as_Second - (arrival_departure[1] - DayObj.datetimeObj).total_seconds()
-              positionlist.append((second, interpolatedOnSegment(segment, arrival_departure[0], arrival_departure[0], relativeseconds)))
-            elif Second > arrival_departure[1]:
-              # elif second is after departing the current stop (but still in trip's time range)
-              next_stopobj = stopobjs[n+1]
-              try:
-                counts[Stop_Times[n+1][3]] = counts[Stop_Times[n+1][3]] + 1
-              except:
-                counts[Stop_Times[n+1][3]] = 1
-              index = counts[Stop_Times[n+1][3]]
-              counts[Stop_Times[n+1][3]] = counts[Stop_Times[n+1][3]] - 1
-              next_arrival = stoparrivedepart[n+1][index-1]
-              if Second < next_arrival:
-                # Then second is between stop and the next stop
-                # Need the relative seconds: <second> rendered as time passed since trip departed stop
-                relativeseconds = Second_as_Second - (arrival_departure[1] - DayObj.datetimeObj).total_seconds()
-                # Need to interpolate its position
-                positionlist.append((second, interpolatedOnSegment(segment, arrival_departure[0], next_arrival, relativeseconds)))
-            # Move to next [n, stop] if no match found
-        else:
-          pass
-      return positionlist
-    
-    factor = 10 # The multiplication factor, idiosyncratic to the GTFS
-    #!! Use <factor> to adjust the shape_dist_traveled column in stop_times
-    
-    # Get all the stops that the trip visits
-    q = Template('SELECT ST.*, S.stop_lat, S.stop_lon FROM stop_times AS ST JOIN stops AS S ON S.stop_id = ST.stop_id WHERE trip_id = $trip_id ORDER BY stop_sequence')
-    query = q.substitute(trip_id = self.trip_id)
-    self.cur.execute(query)
-    stop_times = self.cur.fetchall()
-    
-    # Can only return a point that is between the start and end time of the trip
-    overall_start = self.getTripStartTime(DayObj)
-    overall_end = self.getTripEndTime(DayObj)
-    
-    if single == True:
-      # Return a single tuple of the vehicle's position at <second>
-      second_as_second = second
-      second = DayObj.datetimeObj + datetime.timedelta(seconds=second) # Now datetime.datetime, e.g. datetime.datetime(2013, 12, 15, 0, 0, 1)
-      getpositionSingle(self, second, second_as_second, overall_start, overall_end, stop_times)
-    
-    elif single == False:
-      # Return a list of NoneTypes and Tuples
-      # len(list) = 24*60*60 = 86400
-      return getPositionMultiple(self, overall_start, overall_end, stop_times)
+        pass
+    return positionlist
       
   def intervalByIntervalPosition(self, DayObj, interval=1, updateDB=True, new=True):
     '''
@@ -2524,18 +2436,9 @@ if __name__ == '__main__':
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetime.datetime(2013, 12, 8)) # (2013, 12, 8)
   myTrip = PTTrip(myDB, 13, myDay)
-  #for T in myDay.getAllTrips()[0:10]:
-    #T.intervalByIntervalPosition(myDay, interval=1, updateDB=True, new=True)
-  #myTrip.intervalByIntervalPosition(myDay, interval=1, updateDB=True, new=True)
   dur()
-  ##print "second,pointwkt;"
-  ##for ST in myTrip.whereIsVehicle(myDay):
-    ##print str(ST[0]) + "," + ST[1].wkt + ";"
-  print "thing,linewkt;"
-  print "1,", myTrip.getShapelyLineProjected()
-  dur("myTrip,whereIsVehicle(myDay)")
-  #myTrip.whereIsVehicle(myDay, second=4000, single=True)
-  #dur("myTrip.whereIsVehicle(myDay, second=4000, single=True)")
+  print myTrip.whereIsVehicle(myDay)[0:10]
+  dur("myTrip.whereIsVehicle(myDay)")
     
   ################################################################################
   ################################ End ###########################################
