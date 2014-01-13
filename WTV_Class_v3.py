@@ -1726,7 +1726,16 @@ class PTTrip(Route):
         seen = 0
         seencount[stopobj.stop_id] = 1
       stoparrivedepart[n] = stopobj.getStopTime(self, DayObj)[seen]
-      stopdistalongs.append(min((stopobj.getGivenDistanceAlong(self, n+1, factor=factor) * scalefactor), (nominallength*scalefactor)))
+      stopdistalongsuccess = False
+      step = 1
+      while stopdistalongsuccess == False:
+        try:
+          stopdistalongs.append(min((stopobj.getGivenDistanceAlong(self, n+step, factor=factor) * scalefactor), (nominallength*scalefactor)))
+          stopdistalongsuccess = True
+        except TypeError:
+          # Some trips skip stops and so have gaps in 'stop sequence', producing None for Stop.getGivenDistanceAlong
+          step += 1
+          stopdistalongsuccess = False
     segmentedline = cutLineAtMultiple(line, stopdistalongs)
     for second in range(0,24*60*60,1): # 12am to 11.59pm on <DayObj>, at 1 second intervals
       Second_as_Second = second
@@ -2434,11 +2443,16 @@ if __name__ == '__main__':
   '''
   
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 8)) # (2013, 12, 8)
-  myTrip = PTTrip(myDB, 13, myDay)
-  dur()
-  print myTrip.whereIsVehicle(myDay)[0:10]
-  dur("myTrip.whereIsVehicle(myDay)")
+  myDay = Day(myDB, datetime.datetime(2013, 12, 9)) # (2013, 12, 8)
+  myTrip = PTTrip(myDB, 174, myDay) #13 #174
+  if myTrip.doesTripRunOn(myDay):
+    print myTrip.getTripDuration(myDay)
+    print myTrip.getRoute().getLongName(), myTrip.getRoute().getShortName()
+    print myTrip.getTripStartTime(myDay), myTrip.getTripEndTime(myDay)
+    dur()
+    print myTrip.whereIsVehicle(myDay)[0:10]
+    dur("myTrip.whereIsVehicle(myDay)")
+  print "done"
     
   ################################################################################
   ################################ End ###########################################
