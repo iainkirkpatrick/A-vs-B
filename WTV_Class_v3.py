@@ -67,8 +67,7 @@
 #      > getShapelyLineProjected(source=4326, target=2134) ::Returns a projected Shapely LineString object, derived from self.getShapelyLine(), where <source> is the unprojected Shapely LineString GCS, and <target> is the target projection for the output. The defaults are WGS84 (<source>) and NZGD2000 (<target>).
 #      > plotShapelyLine()               ::Uses matplotlib and Shapely to plot the shape of the trip. Does not plot stops (yet?)::
 #      > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
-#      > whereIsVehicle(DayObj)          ::<DayObj> is a Day object. Returns an ordered list of (second, shapely.geometry.Point) for the entire range of the trip in <DayObj>, every second it runs::
-#      > intervalByIntervalPosition(DayObj, interval=1) ::WRITES TO THE DATABASE about the positions of every vehicle on <DayObj> at the temporal resolution of <interval>. Does not write duplicates. Make sure to only pass it PTTrips that doesTripRunOn(DayObj) == True::
+#      > whereIsVehicle(DayObj, write=False) ::<DayObj> is a Day object. Returns an ordered list of (second, shapely.geometry.Point) for the entire range of the trip in <DayObj>, every second it runs. If write=True, then write the result to the intervals table of the database::
 #      > getShapeID()                    ::Each trip has a particular shape, this returns the ID of it (str)::
 #      > getTripStartDay(DayObj)         ::The start day of a PTTrip is either the given <DayObj>, or the day before it (or neither if it doesn't run). This method returns <DayObj> if the trip starts on <DayObj>, the Day BEFORE <DayObj> if that's right, and None in the third case. Raises an exception in the case of ambiguity::
 #      > getTripEndDay(DayObj)           ::The end day of a PTTrip is either the given <DayObj>, or the day after it (or neither if it doesn't run). This method returns <DayObj> if the trip ends on <DayObj>, the Day AFTER <DayObj> if that's right, and None in the third case. Raises an exception in the case of ambiguity:: 
@@ -146,7 +145,7 @@ from math import sqrt # Snapping
 from sys import maxint # Snapping
 
 import sqlite3 as dbapi
-db_str = "GTFSSQL_Wellington_20131224_132853.db" # Name of database
+db_str = "GTFSSQL_Wellington_20140113_192434.db" # Name of database
 ##db_str = "GTFSSQL_Wellington_20131207_212134__SUBSET__.db" # Subset database, for rapid testing
 #db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB under Windows, change to necessary filepath
 db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
@@ -1578,12 +1577,16 @@ class PTTrip(Route):
 
     return [Stop(self.database, stop[0]) for stop in self.cur.fetchall()]
 
-  def whereIsVehicle(self, DayObj):
+  def whereIsVehicle(self, DayObj, write=False):
     '''
     If self (trip) runs on <DayObj>, returns a list of tuples of integers
     and shapely.geomoetry.Point objects representing the seconds since
     midnight on <DayObj> and the position of the vehicle along its route
     shape.
+    
+    <write> (Boolean, default=False) controls whether the result is to be
+    written to the database. If the trip_id is already in the database,
+    the old trip_id is over-written with the new.
     '''
     def scale_factor(line, nominallength):
       '''
@@ -1775,271 +1778,34 @@ class PTTrip(Route):
           # Move to next [n, stop] if no match found
       else:
         pass
-    return positionlist
-      
-  def intervalByIntervalPosition(self, DayObj, interval=1, updateDB=True, new=True):
-    '''
-    Position is a list of XY tuples indicating the position of a vehicle at each <interval> along its schedule timetable.
-
-    <interval> is a value in seconds.
-
-    **To do:**
-    Also add the parameters: "pickingup" and "droppingoff" which are Boolean and indicate whether the vehicle is picking or
-    dropping off passengers at the moment in time (determine from the attributes of the stops it is between at a moment.
-    
-    Writes to the database, rather than returning the values in memory.
-    Returns only None, but writes to the database if this is appropriate.
-    '''
-    def checkIfShapeHasBeenInterpolated(TripObj, shapeID):
-      '''
-      Interior function to query the database to see if TripObj has already
-      had its shape recorded in the database. If it has, then we do not
-      need to calculate its interval-by-interval position, just offset the
-      one already captured.
-      '''
-      print "checkShape"
-      q = Template('SELECT EXISTS(SELECT 1 FROM intervals WHERE shape_id = "$shape_id")')
-      ##shapeID = TripObj.getShapeID()
-      query = q.substitute(shape_id = shapeID)
-      TripObj.cur.execute(query)
-      result = TripObj.cur.fetchone()[0]
-      print result
-      if result == 0:
-        return False
-      elif result == 1:
-        return True
-    
-    def offsetAlreadyCapturedShape(TripObj, shapeID, start_seconds_since_midnight, end_seconds_since_midnight):
-      '''
-      If a route shape has already been captured, there is no need to
-      interpolate its interval-by-interval position again. This method
-      offsets interpolated route shapes and re-records them in the
-      database.
-      
-      If routes have identical shapes (use checkIfShapeHasBeenInterpolated)
-      this then checks if they have the same total duration.
-      '''
-      # We look at the start and end  of a trip the intervals table
-      # to work out if the two trips are the same
-      # but just start at different times of the day (e.g. an hourly bus).
-      trip_dur_seconds = end_seconds_since_midnight - start_seconds_since_midnight
-      q = Template('SELECT MIN(date), MAX(date), trip_id FROM intervals WHERE shape_id = "$shape_id" GROUP BY trip_id')
-      query = q.substitute(shape_id = shapeID)
-      TripObj.cur.execute(query)
-      rranges = TripObj.cur.fetchall()
-      tripID = TripObj.trip_id
-
-      DONOTREWRITE, WRITEANEW = False, True # Assume trip has not been recorded, until shown otherwise
-      for rrange in rranges:
-        recordedDuration = rrange[1] - rrange[0]
-        if rrange[2] == tripID:
-          # Found a trip that has already been recorded.
-          # Will occur if being run over the same data more than once.
-          # Break
-          DONOTREWRITE = True
-          break
-        elif recordedDuration != trip_dur_seconds:
-          # Then the trip is new, but the shape is not (e.g. a slower peak service along existing route).
-          # However, we need to check all existing cases of this shape before this is confirmed,
-          # so there is no break in this branch.
-          WRITEANEW = True
-        elif recordedDuration == trip_dur_seconds:
-          # How much after (or even before) is this trip? Need to offset the existing rows by this amount.
-          timediff = start_seconds_since_midnight - rrange[0]
-          # Grab the rows to offset then copy back into the table.
-          q = Template('SELECT * FROM intervals WHERE trip_id = "$trip_id" ORDER BY date')
-          query = q.substitute(trip_id = rrange[2])
-          TripObj.cur.execute(query)
-          rows = TripObj.cur.fetchall()
-          time.sleep(1) # Forces a 1 second wait to stop conflicts
-          for row in rows:
-            # Copy its rows, just replace the time with the offset time
-            offsetTime = row[1] + timediff
-            TripObj.cur.execute('INSERT INTO intervals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (tripID, offsetTime, row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9]))
-          TripObj.database.commit()
-          WRITEANEW, DONOTREWRITE = False, True
-          break
-          
-      if WRITEANEW == True and DONOTREWRITE == False:
-        # The shape has not yet been recorded in intervals
-        # Now it needs to be input into database as a new trip-shape.
-        print "Shape has not been recorded in intervals"
-        return False
-      
-      return True # No need to record it anew, it has been offset inside this function.
-    
-    # Start method script
-    if new == True:
-      dur() # Timing function for the method, not the trip
-      tripID = self.trip_id
-      if self.runstoday == True:
-        print "Runs today"
-        # Then the trip runs on the given day and we should infer its location
-        # Get its start and end times as seconds since the beginning of the DayObj
-        start_seconds_since_midnight = int((self.getTripStartTime(DayObj) - DayObj.datetimeObj).total_seconds())
-        end_seconds_since_midnight = int((self.getTripEndTime(DayObj) - DayObj.datetimeObj).total_seconds())
-        shape_id = self.getShapeID()
-        interpolated = checkIfShapeHasBeenInterpolated(self, shape_id)
-        if interpolated == False and updateDB == True:
-          print "Shape has not been interpolated"
-          # Then the trip-shape has not been seen and we need to write its position interval-by-interval for DayObj
-          # Get some facts
-          modetype = self.getRoute().getMode().modetype
-          operator = self.getAgencyID()
-          routeID = self.getRouteID()
-          for second in range (0, 24*60*60, interval):
-            # For every second from midnight at start of DayObj,
-            # to 11:59:59.999 at the end of DayObj...
-            if second >= start_seconds_since_midnight and second <= end_seconds_since_midnight:
-              # If the second is when the trip is operating, write its position
-              vehicleposition = self.whereIsVehicle(second, DayObj)
-              x, y = vehicleposition.x, vehicleposition.y
-              print x, y
-              self.cur.execute('INSERT INTO intervals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (tripID, second, x, y, modetype, None, None, operator, routeID, shape_id))
-          self.database.commmit()
-          print "Shape was written to DB"
-        elif interpolated == True and updateDB == True:
-          print "Shape has been interpolated; offsetting shape-trip from existing"
-          offsetAlreadyCapturedShape(self, shape_id, start_seconds_since_midnight, end_seconds_since_midnight)
-          
-        message = "input trip_id = %i" % (tripID)
-        dur(message)
-      else:
-        message = "skipped trip_id = %i: did not run today... ERROR" % (tripID)
-        dur(message)
-      print ""
-      return None
-      
-    elif new == False:
-      if self.doesRouteRunOn(DayObj) == True:
-        # Infer the time range of the trip
-        stops = self.getStopsInSequence()
-        start_time, end_time = stops[0], stops[-1]
-        start_time, end_time = start_time.getStopTime(self, new=False), end_time.getStopTime(self, new=False)
-
-        if len(start_time) == 1 and len(end_time) == 1:
-          # Then the route does not end where it starts, like most routes
-          start_time, end_time = start_time["arrival_time"], end_time["arrival_time"]
-
-        elif len(start_time) == 2 and len(end_time) == 2:
-          # Then the first and last stops are visited twiintervalByIntervalPositionce: a loop route
-          # Likely, it is a loop that starts and ends at the same place
-          # The earlier one will have a lower stop sequence than the later one
-
-          # For the beginning of the route
-          sequences = []
-          for stop in start_time:
-            sequences.append(stop["stop_sequence"])
-          earlier = min(sequences)
-          for stop in start_time:
-            if stop["stop_sequence"] == earlier:
-              start_time = stop["arrival_time"]
-
-          # For the terminus of the route
-          sequences = []
-          for stop in end_time:
-            sequences.append(stop["stop_sequence"])
-          later = max(sequences)
-          for stop in end_time:
-            if stop["stop_sequence"] == later:
-              end_time = stop["arrival_time"]
-
-        else:
-          # A super loop?
-          raise Exception
-
-        # Convert the start_time and end_time strings into seconds to add to DayObj
-        begin_seconds_past_midnight = int(start_time[0:2])*60*60 + int(start_time[3:5])*60 + int(start_time[6:8])
-        end_seconds_past_midnight = int(end_time[0:2])*60*60 + int(end_time[3:5])*60 + int(end_time[6:8])
-
-        # Check if the same shape has already had its position interpolated!
-        # Because if it has, it's only wasting time to re-interpolate the positon over time.
-        q = Template('SELECT EXISTS(SELECT 1 FROM intervals WHERE shape_id = "$shape_id")')
-        shapeID = self.getShapeID()
-        query = q.substitute(shape_id = shapeID)
+    if write == False:
+      # Then just return the result
+      return positionlist
+    elif write == True:
+      # Then record the result in the database and return None
+      # 1. Check if the trip has already been recorded: if so, delete it
+      query = 'DELETE FROM intervals WHERE trip_id = %s' % (str(self.trip_id))
+      self.cur.execute(query)
+      self.database.commit
+      # 2. Add the data to the table one row at a time, then commit
+      # 2a. Get universally-applicable data
+      trip_id = self.trip_id
+      day = DayObj.isoDate[0:10] # e.g. 2013-12-08
+      route = self.getRoute()
+      route_type_desc = route.getMode().modetype
+      agency_id = self.getAgencyID()
+      route_id = route.route_id
+      shape_id = str(self.getShapeID())
+      for posi in positionlist:
+        second = posi[0]
+        lat = posi[1].y
+        lon = posi[1].x
+        ##pickup_type_text = None # For a later version
+        ##drop_off_type_text = None # For a later version
+        print trip_id, day, second, lat, lon, route_type_desc, agency_id, route_id, shape_id
+        query = 'INSERT INTO intervals VALUES ("%i", "%s", "%i", "%f", "%f", "%s", "None", "None", "%s", "%s", "%s");' % (trip_id, day, second, lat, lon, route_type_desc, agency_id, route_id, shape_id)
         self.cur.execute(query)
-        if self.cur.fetchone():
-          # Then the shape has already been recorded
-          # So now we look at the number of stops, and the start and end time to work out if the two trips are the same
-          # but just start at different times of the day (e.g. an hourly bus).
-          q = Template('SELECT MIN(date), MAX(date), trip_id FROM intervals WHERE shape_id = "$shape_id" GROUP BY trip_id')
-          query= q.substitute(shape_id = shapeID)
-          self.cur.execute(query)
-          rranges = self.cur.fetchall()
-
-          DONOTREWRITE, WRITEANEW = False, True # Assume trip has not been recorded, until shown otherwise
-          tripDuration = end_seconds_past_midnight - begin_seconds_past_midnight
-          for rrange in rranges:
-            recordedDuration = rrange[1] - rrange[0]
-            if rrange[2] == self.trip_id:
-              # Found a trip has already been recorded.
-              # Will occur if being run over the same data more than once.
-              # Break
-              DONOTREWRITE = True
-              break
-            elif recordedDuration != tripDuration:
-              # Then the trip is new, but the shape is not (e.g. a slower peak service along existing route).
-              # However, we need to check all existing cases of this shape before this is confirmed,
-              # so there is no break in this branch.
-              WRITEANEW = True
-            elif recordedDuration == tripDuration:
-              # How much after (or even before) is this trip? Need to offset the existing rows by this amount.
-              timediff = begin_seconds_past_midnight - rrange[0]
-              # Grab the rows to offset then copy back into the table.
-              q = Template('SELECT * FROM intervals WHERE trip_id = "$trip_id" ORDER BY date')
-              query = q.substitute(trip_id = rrange[2])
-              self.cur.execute(query)
-              rows = self.cur.fetchall()
-              time.sleep(1) # Forces a 1 second wait to stop conflicts
-
-              for row in rows:
-                # Copy its rows, just replace the time with the offset time
-                offsetTime = row[1] + timediff
-                self.cur.execute('INSERT INTO intervals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (self.trip_id, offsetTime, row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9]))
-              self.database.commit()
-              WRITEANEW = False
-              break
-
-        if WRITEANEW == True and DONOTREWRITE == False:
-          # The shape has not yet been recorded in intervals
-          # For each <interval> in the trip's duration, add the position of the trip as a (X,Y,) tuple, to a list
-          positions = []
-          for second in range(begin_seconds_past_midnight, end_seconds_past_midnight+1, interval):
-            if second < 86400: # Not at or after midnight
-              elapsed = datetime.timedelta(seconds=second)                      # e.g. 24500 seconds
-              current_time = (datetime.datetime.min + elapsed).time()           # e.g. 24500 seconds would become
-                                                                                # datetime.time(6, 48, 20)=06:48:20.000
-              positions.append([second, self.whereIsVehicle(current_time, DayObj)]) # Seconds past midnight, followed by position
-
-          # Once done, if the end time is not divisible by the interval
-          # We need to append that special case to ensure the end of the trip is always shown
-          # This is important for inferring trip duration from the intervals table
-          if end_seconds_past_midnight%interval != 0:
-            elapsed = datetime.timedelta(seconds=end_seconds_past_midnight)
-            current_time = (datetime.datetime.min + elapsed).time()
-            positions.append([end_seconds_past_midnight, self.whereIsVehicle(current_time, DayObj)]) # Parameters have changed! 03-01-2013
-
-          trip_summary = {"TripID": self.trip_id,
-                          "Position": positions,
-                          "Modetype": self.getRoute().getMode().modetype,
-                          "Operator": self.getAgencyID(),
-                          "RouteID": self.getRouteID(),
-                          "ShapeID": self.getShapeID()}
-
-          if updateDB == True:
-            for position in trip_summary["Position"]:
-              if position[0] < 86400:
-                # i.e., before midnight, not after it or on it
-                # FIXME: Midnight bug in PTTrip.intervalByIntervalPosition
-                self.cur.execute('INSERT INTO intervals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (trip_summary["TripID"], position[0], position[1][0], position[1][1], trip_summary["Modetype"], None, None, trip_summary["Operator"], trip_summary["RouteID"], trip_summary["ShapeID"]))
-            self.database.commit()
-          return None
-
-      else:
-        # The trip does not operate on DayObj, so forget about it.
-        # Or it has already been written.
-        return None
-
+      self.database.commit()
       return None
 
 class Stop(Database):
@@ -2443,14 +2209,15 @@ if __name__ == '__main__':
   '''
   
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 9)) # (2013, 12, 8)
-  myTrip = PTTrip(myDB, 174, myDay) #13 #174
+  myDay = Day(myDB, datetime.datetime(2013, 12, 8)) # (2013, 12, 8)
+  print myDay.isoDate[0:10]
+  myTrip = PTTrip(myDB, 13, myDay) #13 #174
   if myTrip.doesTripRunOn(myDay):
     print myTrip.getTripDuration(myDay)
     print myTrip.getRoute().getLongName(), myTrip.getRoute().getShortName()
     print myTrip.getTripStartTime(myDay), myTrip.getTripEndTime(myDay)
     dur()
-    print myTrip.whereIsVehicle(myDay)[0:10]
+    myTrip.whereIsVehicle(myDay, write=True)
     dur("myTrip.whereIsVehicle(myDay)")
   print "done"
     
