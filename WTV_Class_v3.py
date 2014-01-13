@@ -2106,19 +2106,18 @@ if __name__ == '__main__':
   ########################## Testing Section #####################################
   ################################################################################
 
-  '''
   ## Testing PTTrip.intervalByIntervalPosition -- building the animation database!
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
 
-  interval=1 # Temporal resolution, in seconds
   dur() # Initiate timer
 
   allTrips = myDay.getAllTrips()
   dur('myDay.getAllTrips()') # How long did it take to get all trip objects for myDay?
+  print len(allTrips), "to process."
 
-  endtime = datetime.time(22, 30) # End time for processing
-  i = 1
+  endtime = datetime.time(23) # End time for processing
+  i = 0
 
   for trip in allTrips: # For all trips on myDay
     current_time = datetime.datetime.now().time()
@@ -2126,10 +2125,9 @@ if __name__ == '__main__':
       dur() # Re-initiate timer, once for each trip
       myDatabase = Database(myDB)
       myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-      trip.intervalByIntervalPosition(myDay, interval=interval)
-      process="Trip=%s, i=%i, mode=%s myPTTrip.intervalByIntervalPosition(myDay, interval=%i)" % (trip.trip_id, i, trip.getMode().modetype, interval)
+      trip.whereIsVehicle(myDay, write=True)
+      process="Trip=%s, i=%i, mode=%s myPTTrip.intervalByIntervalPosition(myDay, interval=%i)" % (trip.trip_id, i,)
       dur(process) # How long did it take to process the record?
-      myDB.commit() # Commit to database
       i += 1 # Next index, in parallel with trip_id
 
   # When done, play some noise to let me know
@@ -2140,87 +2138,7 @@ if __name__ == '__main__':
   for i in range(0,5):
     sound.play()
     time.sleep(1)
-  '''
 
-  '''
-  ## Testing Day.plotModeSplit_NVD3
-  myDatabase = Database(myDB)
-  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-
-  myDay.plotModeSplit_NVD3(myDay, "Wellington")
-  '''
-
-  '''
-  ## Testing Day.animateDay()
-  dur()
-  myDatabase = Database(myDB)
-  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-  myDay.animateDay(0, 86399)
-  dur("myDay.animateDay(0, 86399)")
-  '''
-
-  '''
-  ## Trying to fix the placement problem. See the QGIS file
-  myDatabase = Database(myDB)
-  myTrip = PTTrip(myDB, "16")
-  print myTrip.getShapelyLineProjected()
-  print ""
-  print "stop_id, WKT_point;"
-  for stop in myTrip.getStopsInSequence():
-    #print stop.getShapelyPointProjected().coords[:],
-    print "%s, POINT (%.9f %.9f);" % (stop.stop_id, stop.getStopSnappedToRoute(myTrip, projected=True).x, stop.getStopSnappedToRoute(myTrip, projected=True).y)
-      
-  #myTrip.cur.execute('SELECT * FROM intervals WHERE trip_id = "16"')
-  #print "Seconds, Point;"
-  #for i in myTrip.cur.fetchall():
-    #print "%i, POINT (%.7f %.7f);" % (i[1], i[2], i[3])
-    
-  #print ""
-  #print myTrip.getShapelyLineProjected()
-  #for stop in myTrip.getStopsInSequence():
-    #print stop.getShapelyPoint()
-  '''
-
-  '''
-  ## Testing bokehFrequencyByMode
-  myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 8))
-  myDay.bokehFrequencyByMode(1*60, Show=True)
-  '''
-  
-  '''
-  ## Testing for addressing post-midnight bug with relevant methods
-  myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 10)) # (2013, 12, 8)
-  for T in Route(myDB, "WBAO017O").getTripsInDayOnRoute(myDay): # "WBAO130O", "WRAHVL0I"
-    print T.getTripStartTime(myDay), "\t", T.getTripEndTime(myDay), "\t", T.trip_id, "\t", T.getTripDuration(myDay), T.getTripSpeed(myDay)
-  print ""
-  print ""
-  #print myDay.dayOfWeekStr.title(), PTTrip(myDB, "800").getRouteID(), PTTrip(myDB, "800").getTripStartTime(myDay), PTTrip(myDB, "800").getTripEndTime(myDay)
-  '''
-  
-  '''
-  myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 10)) # (2013, 12, 8)
-  myTrip = PTTrip(myDB, 754)
-  #print myTrip.getShapelyLineProjected().coords[:]
-  for S in myTrip.getStopsInSequence():
-    print S.getStopSnappedToRoute(myTrip, projected=False).x, S.getStopSnappedToRoute(myTrip, projected=False).y
-  '''
-  
-  myDatabase = Database(myDB)
-  myDay = Day(myDB, datetime.datetime(2013, 12, 8)) # (2013, 12, 8)
-  print myDay.isoDate[0:10]
-  myTrip = PTTrip(myDB, 13, myDay) #13 #174
-  if myTrip.doesTripRunOn(myDay):
-    print myTrip.getTripDuration(myDay)
-    print myTrip.getRoute().getLongName(), myTrip.getRoute().getShortName()
-    print myTrip.getTripStartTime(myDay), myTrip.getTripEndTime(myDay)
-    dur()
-    myTrip.whereIsVehicle(myDay, write=True)
-    dur("myTrip.whereIsVehicle(myDay)")
-  print "done"
-    
   ################################################################################
   ################################ End ###########################################
   ################################################################################
