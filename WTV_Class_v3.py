@@ -82,7 +82,7 @@
 #      > getLocationType()               ::Returns location_type_desc from the stops table: ["Stop", "Station", "Hail and Ride"]. For Metlink: ["Stop", "Hail and Ride"]::
 #      > getShapelyPoint()               ::Returns a shapely Point object representing the location of the stop::
 #      > getShapelyPointProjected(source=4326, target=2134) ::Returns a Shapely point representing the location of the stop, projected from the <source> GCS to the <target> PCS. 2134 = NZGD2000 / UTM zone 59S (default <target>); 4326 = WGS84 (default <source>). Returns a shapely.geometry.point.Point object::
-#      > getStopTime(TripObj, DayObj=None, new=True) ::if new==False: Returns a dictionary of {"stop_sequence":integer, "arrival_time":string, "departure_time":string, "pickup_type_text":string, "drop_off_type_text":string, "shape_dist_traveled":float} at the Stop for a given Trip. Strings are used for arrival_time and departure_time where datetime.time objects would be preferred, because these times can exceed 23:59:59.999999, and so cause a value error if instantiated. elif new==True: Returns a list of tuples of date+time objects representing the day-time(s) when the <TripObj> arrives and departs self (Stop), using <DayObj> as seed::
+#      > getStopTime(TripObj, DayObj)    ::Returns a list of tuples of date+time objects representing the day-time(s) when the <TripObj> arrives and departs self (Stop), using <DayObj> as seed::
 #      > getStopSnappedToRoute(TripObj)  ::Returns a Shapely.geometry.point.Point object representing the originally-non-overlapping Stop as a Point overlapping (or very, very nearly overlapping) the Route shape of <TripObj>::
 
 # Tasks for next iteration/s:
@@ -487,7 +487,7 @@ class Day(Database):
       
     # Use newsecond to get all of the trips that operate at <second>
     newsecond = str(newsecond.hour*3600 + newsecond.minute*60 + newsecond.second)
-    query = 'SELECT DISTINCT trip_id FROM intervals WHERE date = "%s"' % newsecond # Dont change this without referring to self.countActiveTripsByMode first
+    query = 'SELECT DISTINCT trip_id FROM intervals WHERE seconds = "%s"' % newsecond # Dont change this without referring to self.countActiveTripsByMode first
     self.cur.execute(query)
     nominallyrunning = self.cur.fetchall()
     
@@ -610,110 +610,324 @@ class Day(Database):
       bokeh.plotting.show()
     return None
 
-  def animateDay(self, start, end):
+  def animateDay(self, start, end, sourceproj=None, new=False):
     '''
     Animates the public transport system for self day.
-
-    Psuedo code:
-    Pre: get the maximum and minimum x and y of all the data in the database?
-    1. Get all XYs of vehicles that operate in the first second
-    2. Display them
-    3. Get the next XYs
-    4. But do the above with basemap
+    <start> = start seconds since midnight on self (Day)
+    <end> = see <start>
+    <sourceproj> = The projection system that the data in the intervals
+    table is stored in. See: http://spatialreference.org/ref/epsg/2193/
+    for example. Enter it as an integer, e.g. 2193 (EPSG format).
+    <new>: Control flow for new and deprecated methods.
     '''
-    matplotlib.rcParams['backend'] = "Qt4Agg"
-    from mpl_toolkits.basemap import Basemap
-    from shapely.geometry import Polygon
-    import pylab
-
-    self.cur.execute('SELECT MAX(stop_lat), MIN(stop_lat), MAX(stop_lon), MIN(STOP_lon) FROM stops')
-    boundary = self.cur.fetchall()[0]
-    maxy, miny, maxx, minx = boundary[0], boundary[1], boundary[2], boundary[3]
-
-    #boundary = Polygon([(minx, maxy), (maxx, maxy), (maxx, miny), (minx, miny)])
-    #centrex, centrey = boundary.centroid.x, boundary.centroid.y
-    centrex, centrey = 174.777222, -41.2888889
-    maxy, minx, miny, maxx = -41, 174.6, -41.5, 175.1
-
-    for i in range(start, end+1):
-
-      m = Basemap(llcrnrlon=minx, llcrnrlat=miny, urcrnrlon=maxx, urcrnrlat=maxy, resolution='f',projection='cass',lon_0=centrex, lat_0=centrey)
+    import mpl_toolkits.basemap.pyproj as pyproj
+    def make_GCS(latlist,lonlist,sourceproj):
+      '''
+      Rather than writing the intervals table in lat/lon values,
+      this function convers <x> and <y> from a <source> projected
+      coordinate system to lat/lon.
+      Many thanks to John A. Stevenson:
+      http://all-geo.org/volcan01010/2012/11/change-coordinates-with-pyproj/
+      '''
+      if latlist == [] and lonlist == []:
+        return (latlist, lonlist)
+      else:
+        source = pyproj.Proj("+init=EPSG:%i" % sourceproj)
+        return source(latlist, lonlist, inverse=True) # Tuple of two lists
+    
+    if new == True:
+      '''
+      # Prepare plotting space
+      import shapely.geometry
+      matplotlib.rcParams['backend'] = "Qt4Agg"
+      from mpl_toolkits.basemap import Basemap
+      import pylab
+      '''
+      '''# deprecated
+      # get bounding box from data
+      # need to add: from shapely.geometry import Polygon
+      self.cur.execute('SELECT MAX(lat), MIN(lat), MAX(lon), MIN(lon) FROM intervals')
+      boundary = self.cur.fetchall()[0]
+      maxy, minx, miny, maxx = float(boundary[0]), float(boundary[3]), float(boundary[1]), float(boundary[2])
+      ll = make_GCS([minx], [miny], sourceproj)
+      ur = make_GCS([maxx], [maxy], sourceproj)
+      ul = make_GCS([minx], [maxy], sourceproj)
+      lr = make_GCS([maxx], [miny], sourceproj)
+      print ll, ur
+      llcrnrlon, llcrnrlat, urcrnrlon, urcrnrlat = ll[0][0], ll[1][0], ur[0][0], ur[1][0]
+      # Five vertices: it closes
+      shape = Polygon([(ll[0][0], ll[1][0]), (ul[0][0], ul[1][0]), (ur[0][0], ur[1][0]), (lr[0][0], lr[1][0]), (ll[0][0], ll[1][0])])
+      shapecentre = shape.centroid
+      centrex, centrey = shapecentre.x, shapecentre.y
+      # deprecated
+      '''
+      
+      # Set up background of animation
+      from matplotlib import pyplot as plt
+      from mpl_toolkits.basemap import Basemap
+      #fig = plt.figure(figsize=(5.90551*2, 3.14691*2), frameon=False, tight_layout=True)
+      fig = plt.figure(frameon=False, tight_layout=True)
+      llcrnrlon, llcrnrlat = 174.7, -41.4 # TODO: Parametricise the extent
+      # Control aspect ratio without distorting: upper right corner is
+      # variable; lower left is fixed.
+      urcrnrlon, urcrnrlat = llcrnrlon+(0.5*(4.0/3.0)), llcrnrlat+0.5 # 4:3 aspect ratio
+      #urcrnrlon, urcrnrlat = llcrnrlon+(0.5*(16.0/9.0)), llcrnrlat+0.5 # 16:9 aspect ratio
+      #urcrnrlon, urcrnrlat = llcrnrlon+0.5, llcrnrlat+0.5  # Equal aspect ratio
+      ax = plt.axes(xlim=(llcrnrlon,urcrnrlon), ylim=(llcrnrlat,urcrnrlat), frame_on=True, rasterized=False)
+      ax.get_xaxis().set_visible(False)
+      ax.get_yaxis().set_visible(False)
+      title_text = ax.text(0.89, 0.03, '', transform=ax.transAxes, fontsize=11, family='monospace', weight='heavy')
+      bus, = ax.plot([], [], 'o', ms=3, c='#BA5F22', alpha=1, zorder=2)
+      train, = ax.plot([], [], 'o', ms=4, c='#000000', alpha=1, zorder=2)
+      ferry, = ax.plot([], [], 'o', ms=3, c='#FFFFFF', alpha=1, zorder=2)
+      cablecar, = ax.plot([], [], 'o', ms=2, c='#FF0000', alpha=1, zorder=2)
+      # TODO: add more when there are more GTFS feeds
+      m = Basemap(llcrnrlon=llcrnrlon, llcrnrlat=llcrnrlat, urcrnrlon=urcrnrlon, urcrnrlat=urcrnrlat, resolution='f', area_thresh = 0)
       m.drawcoastlines(linewidth=.2)
       m.fillcontinents(color='#CDBC8E',lake_color='#677D6C')
       m.drawmapboundary(fill_color='#677D6C')
-
-      buslats, buslons, tralats, tralons, ccllats, ccllons, frylats, frylons = [], [], [], [], [], [], [], []
-
-      q = Template('SELECT date, lat, lon, route_type_desc FROM intervals WHERE date = "$second"')
-      query = q.substitute(second = i)
+      
+      # Plot the background of each frame
+      def init():
+        title_text.set_text('')
+        bus.set_data([], [])
+        train.set_data([], [])
+        ferry.set_data([], [])
+        cablecar.set_data([], [])
+        return bus, train, ferry, cablecar, title_text
+        
+      # Prepare the positions to plot
+      posdict = {'Bus': {}, 'Rail': {}, 'Ferry': {}, 'Cable Car': {}}
+      query = 'SELECT seconds, lat, lon, route_type_desc FROM intervals WHERE seconds >= "%i" AND seconds <= "%i"' % (start, end)
       self.cur.execute(query)
-      active = self.cur.fetchall()
+      answer = self.cur.fetchall()
+      for a in answer:
+        second, lat, lon, mode = a[0], a[1], a[2], a[3]
+        if mode not in posdict:
+          posdict[mode] = {} # An inner dict for each mode
+        if second not in posdict[mode]:
+          posdict[mode][second] = ([], [])
+        posdict[mode][second][0].append(lat)
+        posdict[mode][second][1].append(lon)
+      answer = None
+      for mode in ['Bus', 'Rail', 'Ferry', 'Cable Car']:
+        for s in range(start, end):
+          try:
+            lon = posdict[mode][s][1]
+            lat = posdict[mode][s][0]
+          except KeyError:
+            # Mode doesn't operate at s
+            lon = []
+            lat = []
+          posdict[mode][s] = make_GCS(lon, lat, sourceproj)
+      
+      # Animation function: called sequentially
+      def animate(i):
+        # i starts at 0
+        i = i + start
+        time = str(datetime.timedelta(seconds=i))
+        title_text.set_text('%s' % time)
+        bus.set_data(posdict['Bus'][i][0], posdict['Bus'][i][1])
+        ##posdict['Bus'].pop(i) # use this if saving AND not showing
+        train.set_data(posdict['Rail'][i][0], posdict['Rail'][i][1])
+        ##posdict['Rail'].pop(i)
+        ferry.set_data(posdict['Ferry'][i][0], posdict['Ferry'][i][1])
+        ##posdict['Ferry'].pop(i)
+        cablecar.set_data(posdict['Cable Car'][i][0], posdict['Cable Car'][i][1])
+        ##posdict['Cable Car'].pop(i)
+        return bus, train, ferry, cablecar, title_text
+        
+      # call the animator
+      frames = end-start # How many frames (essentially the duration)
+      interval = 1 # New frame drawn every <interval> milliseconds. 1 means 1000 frames per second. 3 means 333 frames per second
+      blit = True # Only re-draw the bits that have changed
+      anim = animation.FuncAnimation(fig, animate, init_func=init, frames=frames, interval=1, blit=blit)
 
-      for vehicle in active:
-        if vehicle[3] == "Bus":
-          buslons.append(vehicle[1])
-          buslats.append(vehicle[2])
-        elif vehicle[3] == "Rail":
-          tralons.append(vehicle[1])
-          tralats.append(vehicle[2])
-        elif vehicle[3] == "Ferry":
-          frylons.append(vehicle[1])
-          frylats.append(vehicle[2])
-        elif vehicle[3] == "Cable Car":
-          ccllons.append(vehicle[1])
-          ccllats.append(vehicle[2])
+      # save as an mp4
+      filename='test_systemanimate_wgtn.mp4'
+      writer='ffmpeg_file'
+      fps=576
+      #dpi=300
+      #bitrate = None # This can be used to influence file size
+      extra_args=['-vcodec', 'libx264']
+      #anim.save(filename, writer=writer, fps=fps, extra_args=extra_args)
+      plt.show()
+      
+      '''
+      shape = shapely.geometry.box(llcrnrlon, llcrnrlat, urcrnrlon, urcrnrlat)
+      centrex, centrey = shape.centroid.x, shape.centroid.y
+      fig = plt.figure()
+      for h in range(0, 23): # hour
+        seconds = [60*60*h, min(60*60*(h+1), 86400-1)] # Seconds at start and end of hour
+        if seconds[0] < start:
+          seconds[0] = start
+        if seconds[1] > end:
+          seconds[0] = end
+        query = 'SELECT seconds, lat, lon, route_type_desc FROM intervals WHERE seconds >= "%i" AND seconds <= "%i"' % (seconds[0], seconds[1])
+        self.cur.execute(query)
+        vehiclesinhour = self.cur.fetchall()
+        for s in range(seconds[0], seconds[1]):
+          current = [(veh[1], veh[2], veh[3]) for veh in vehiclesinhour if veh[0] == s]
+          buses_lat = [bus[0] for bus in current if bus[2] == "Bus"]
+          buses_lon = [bus[1] for bus in current if bus[2] == "Bus"]
+          cablecars_lat = [cc[0] for cc in current if cc[2] == "Cable Car"]
+          cablecars_lon = [cc[1] for cc in current if cc[2] == "Cable Car"]
+          trains_lat = [tr[0] for tr in current if tr[2] == "Rail"]
+          trains_lon = [tr[1] for tr in current if tr[2] == "Rail"]
+          ferries_lat = [fer[0] for fer in current if fer[2] == "Ferry"]
+          ferries_lon = [fer[1] for fer in current if fer[2] == "Ferry"]
+          # Plot these
+          m = Basemap(llcrnrlon=llcrnrlon, llcrnrlat=llcrnrlat, urcrnrlon=urcrnrlon, urcrnrlat=urcrnrlat, lon_0=centrex, lat_0=centrey, resolution='f', area_thresh = 0, projection='tmerc')
+          m.drawcoastlines(linewidth=.2)
+          m.fillcontinents(color='#CDBC8E',lake_color='#677D6C')
+          m.drawmapboundary(fill_color='#677D6C')
+          try:
+            if sourceproj is not None:
+              busGCS = make_GCS(buses_lon, buses_lat, sourceproj)
+              buses_lon, buses_lat = busGCS[0], busGCS[1]
+            x,y = m(buses_lon,buses_lat)
+            m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
+          except:
+            x,y = m([0.0],[0.0])
+            m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
+            
+          try:
+            if sourceproj is not None:
+              ferryGCS = make_GCS(ferries_lon, ferries_lat, sourceproj)
+              ferries_lon, ferries_lat = ferryGCS[0], ferryGCS[1]
+            x,y = m(ferries_lon,ferries_lat)
+            m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
+          except:
+            x,y = m([0.0],[0.0])
+            m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
 
-      try:
-        x,y = m(buslons,buslats)
-        m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
-      except:
-        x,y = m([0.0],[0.0])
-        m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
+          try:
+            if sourceproj is not None:
+              cablecarGCS = make_GCS(cablecars_lon, cablecars_lat, sourceproj)
+              cablecars_lon, cablecars_lat = cablecarGCS[0], cablecarGCS[1]
+            x,y = m(cablecars_lon,cablecars_lat)
+            m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
+          except:
+            x,y = m([0.0],[0.0])
+            m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
 
-      try:
-        x,y = m(frylons,frylats)
-        m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
-      except:
-        x,y = m([0.0],[0.0])
-        m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
+          try:
+            if sourceproj is not None:
+              trainGCS = make_GCS(trains_lon, trains_lat, sourceproj)
+              trains_lon, trains_lat = trainGCS[0], trainGCS[1]
+            x,y = m(trains_lon,trains_lat)
+            m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
+          except:
+            x,y = m([0.0],[0.0])
+            m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
+            
+          title = "Time=%i" % s
+          plt.title(title)
+          
+          filename = "Testing/TestImages/%i.png" % s
+          
+          #plt.show()
+          plt.savefig(filename)
+          
+          # Moves to next second, then next hour
+        
+    else:
+      matplotlib.rcParams['backend'] = "Qt4Agg"
+      from mpl_toolkits.basemap import Basemap
+      from shapely.geometry import Polygon
+      import pylab
 
-      try:
-        x,y = m(ccllons,ccllats)
-        m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
-      except:
-        x,y = m([0.0],[0.0])
-        m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
+      self.cur.execute('SELECT MAX(stop_lat), MIN(stop_lat), MAX(stop_lon), MIN(STOP_lon) FROM stops')
+      boundary = self.cur.fetchall()[0]
+      maxy, miny, maxx, minx = boundary[0], boundary[1], boundary[2], boundary[3]
 
-      try:
-        x,y = m(tralons,tralats)
-        m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
-      except:
-        x,y = m([0.0],[0.0])
-        m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
+      #boundary = Polygon([(minx, maxy), (maxx, maxy), (maxx, miny), (minx, miny)])
+      #centrex, centrey = boundary.centroid.x, boundary.centroid.y
+      centrex, centrey = 174.777222, -41.2888889
+      maxy, minx, miny, maxx = -41, 174.6, -41.5, 175.1
+      
+      print start, end
+      for i in range(start, end+1):
 
-      title = "Time=%i" % i
-      plt.title(title)
+        m = Basemap(llcrnrlon=minx, llcrnrlat=miny, urcrnrlon=maxx, urcrnrlat=maxy, resolution='f',projection='cass',lon_0=centrex, lat_0=centrey)
+        m.drawcoastlines(linewidth=.2)
+        m.fillcontinents(color='#CDBC8E',lake_color='#677D6C')
+        m.drawmapboundary(fill_color='#677D6C')
 
-      filename = "TestImages/%i.png" % i
-      plt.savefig(filename)
+        buslats, buslons, tralats, tralons, ccllats, ccllons, frylats, frylons = [], [], [], [], [], [], [], []
 
-      plt.clf()
+        q = Template('SELECT seconds, lat, lon, route_type_desc FROM intervals WHERE seconds = "$second"')
+        query = q.substitute(second = i)
+        self.cur.execute(query)
+        active = self.cur.fetchall()
 
-    import cv2, cv
-    from PIL import Image
-    from StringIO import StringIO
-    sample = cv2.imread(filename)
-    fourcc = cv.CV_FOURCC('D', 'I', 'V', 'X')
-    fps = 100 # Note: Chris was doing 10 minutes per second
-              # For interval=1, that's 600
-    height, width, layers = sample.shape
-    video = cv2.VideoWriter('TestImages/Video.avi', fourcc, fps, (width,height), 1);
+        for vehicle in active:
+          if vehicle[3] == "Bus":
+            buslons.append(vehicle[1])
+            buslats.append(vehicle[2])
+          elif vehicle[3] == "Rail":
+            tralons.append(vehicle[1])
+            tralats.append(vehicle[2])
+          elif vehicle[3] == "Ferry":
+            frylons.append(vehicle[1])
+            frylats.append(vehicle[2])
+          elif vehicle[3] == "Cable Car":
+            ccllons.append(vehicle[1])
+            ccllats.append(vehicle[2])
 
-    for i in range(start, end+1):
-      img = "TestImages/%i.png" % i
-      cap = cv2.imread(img)
-      video.write(cap)
+        try:
+          x,y = m(buslons,buslats)
+          m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
+        except:
+          x,y = m([0.0],[0.0])
+          m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
 
+        try:
+          x,y = m(frylons,frylats)
+          m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
+        except:
+          x,y = m([0.0],[0.0])
+          m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
+
+        try:
+          x,y = m(ccllons,ccllats)
+          m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
+        except:
+          x,y = m([0.0],[0.0])
+          m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
+
+        try:
+          x,y = m(tralons,tralats)
+          m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
+        except:
+          x,y = m([0.0],[0.0])
+          m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
+
+        title = "Time=%i" % i
+        plt.title(title)
+
+        filename = "Testing/TestImages/%i.png" % i
+        print filename
+        plt.savefig(filename)
+
+        plt.clf()
+
+      import cv2, cv
+      from PIL import Image
+      from StringIO import StringIO
+      sample = cv2.imread("Testing/TestImages/" + str(start) + ".png")
+      fourcc = cv.CV_FOURCC('D', 'I', 'V', 'X')
+      fps = 100 # Note: Chris was doing 10 minutes per second
+                # For interval=1, that's 600
+      height, width, layers = sample.shape
+      video = cv2.VideoWriter('TestImages/Video_v2.avi', fourcc, fps, (width,height), 1);
+
+      for i in range(start, end+1):
+        img = "Testing/TestImages/%i.png" % i
+        cap = cv2.imread(img)
+        video.write(cap)
+      '''
+      
 class Mode(Database):
   '''
   A class of vehicle that has particular properties it does not share with other vehicles.
@@ -1667,6 +1881,9 @@ class PTTrip(Route):
           # n is end of trip
           m = n
         if stopdistalongs[n] > stopdistalongs[m]:
+          print stopdistalongs
+          print stopdistalongs[n], stopdistalongs[m]
+          print n, m
           raise Exception
         # Remove the head segment
         seg = cut(line, stopdistalongs[n])
@@ -1719,6 +1936,8 @@ class PTTrip(Route):
     
     # Stop arrival/departures
     stoparrivedepart, seencount, stopdistalongs, stopobjs = {}, {}, [], []
+    successat = None # For fewer SQL statements and th edge-case where
+                     # the route doubles-back on itself.
     for n, stop in enumerate(Stop_Times):
       stopobj = Stop(self.database, stop[3])
       stopobjs.append(stopobj)
@@ -1733,8 +1952,9 @@ class PTTrip(Route):
       step = 1
       while stopdistalongsuccess == False:
         try:
-          stopdistalongs.append(min((stopobj.getGivenDistanceAlong(self, n+step, factor=factor) * scalefactor), (nominallength*scalefactor)))
+          stopdistalongs.append(min((stopobj.getGivenDistanceAlong(self, max(successat, n+step), factor=factor) * scalefactor), (nominallength*scalefactor)))
           stopdistalongsuccess = True
+          successat = n+step
         except TypeError:
           # Some trips skip stops and so have gaps in 'stop sequence', producing None for Stop.getGivenDistanceAlong
           step += 1
@@ -1802,7 +2022,6 @@ class PTTrip(Route):
         lon = posi[1].x
         ##pickup_type_text = None # For a later version
         ##drop_off_type_text = None # For a later version
-        print trip_id, day, second, lat, lon, route_type_desc, agency_id, route_id, shape_id
         query = 'INSERT INTO intervals VALUES ("%i", "%s", "%i", "%f", "%f", "%s", "None", "None", "%s", "%s", "%s");' % (trip_id, day, second, lat, lon, route_type_desc, agency_id, route_id, shape_id)
         self.cur.execute(query)
       self.database.commit()
@@ -1882,6 +2101,8 @@ class Stop(Database):
     Returns a Shapely point representing the location of the stop,
     projectedd from the <source> GCS to the <target> PCS.
     
+    TODO: parametricise GCSs and PCSs.
+    2193 = NZGS2000 / NZTM 2000
     2134 = NZGD2000 / UTM zone 59S (default <target>)
     4326 = WGS84 (default <source>)
     
@@ -1902,21 +2123,11 @@ class Stop(Database):
     ogr_geom.TransformTo(to_srs)
     return loads(ogr_geom.ExportToWkb())
     
-  def getStopTime(self, TripObj, DayObj=None, new=True,):
+  def getStopTime(self, TripObj, DayObj):
     '''
-    Returns a dictionary of:
-    {"stop_sequence":integer,
-    "arrival_time":string,
-    "departure_time":string,
-    "pickup_type_text":string,
-    "drop_off_type_text":string,
-    "shape_dist_traveled":float} at the Stop for a given Trip.
-    Strings are used for arrival_time and departure_time where
-    datetime.time objects would be preferred, because these times can
-    exceed 23:59:59.999999, and so cause a value error if instantiated.
-    
-    TODO: What about trips with the same trip_id that visit the same stop
-    more than once?
+    Returns a list of (arrival, departure) time tuples.
+    The elements of the tuple are datetime.datetime objects.
+    They are in the same order as the stops visited along the trip.
     '''
     def prepare_tuple(fetchall, DayObj):
       retlist = []
@@ -1948,44 +2159,18 @@ class Stop(Database):
             stop_departure_datetime = nextday.combine(nextday, datetime.time(int(departure_hour), int(departure_min), int(departure_sec), int(departure_ssec)))
           retlist.append((stop_arrival_datetime, stop_departure_datetime))
       return retlist
-    
-    if new == False:
-      q = Template('SELECT stop_sequence, arrival_time, departure_time, pickup_type_text, drop_off_type_text, shape_dist_traveled FROM stop_times WHERE stop_id = "$stop_id" and trip_id = "$trip_id"')
+      
+    # 1. Check if trip runs on DayObj
+    if TripObj.doesTripRunOn(DayObj):
+      # 2. Get the raw arrival and departure times
+      q = Template('SELECT arrival_time, departure_time FROM stop_times WHERE stop_id = "$stop_id" and trip_id = "$trip_id" ORDER BY stop_sequence ASC')
       query = q.substitute(stop_id = self.stop_id, trip_id = TripObj.trip_id)
       self.cur.execute(query)
       stops = self.cur.fetchall()
-      if len(stops) == 1:
-        # Then the trip only visits that stop once in its trip
-        stop_time = stops[0]
-        stop_time = {"stop_sequence":int(stop_time[0]), "arrival_time":stop_time[1], "departure_time":stop_time[2], "pickup_type_text":stop_time[3], "drop_off_type_text":stop_time[4], "shape_dist_traveled":float(stop_time[5])}
-        return stop_time
-      else:
-        # Then the trip makes multiple visits to that stop in its trip
-        # e.g. a loop that starts and stops at the same place
-        # Such as trips 13, 14 and 15 (N001 Wellington),
-        # or a trip that goes over midnight in two consecutive nights.
-        # So return a list of stop_times (a list of dictionaries)
-        stop_times = []
-        for stop_time in stops:
-          stop_time = {"stop_sequence":int(stop_time[0]), "arrival_time":stop_time[1], "departure_time":stop_time[2], "pickup_type_text":stop_time[3], "drop_off_type_text":stop_time[4], "shape_dist_traveled":float(stop_time[5])}
-          stop_times.append(stop_time)
-        return stop_times # A list of dictionaries
-    else:
-      # New version
-      # I want it to return simply a tuple of stop arrival date-time,
-      # and stop departure date-time, in the same format as the trip
-      # start and end time
-      # 1. Check if trip runs on DayObj
-      if TripObj.doesTripRunOn(DayObj):
-        # 2. Get the raw arrival and departure times
-        q = Template('SELECT arrival_time, departure_time FROM stop_times WHERE stop_id = "$stop_id" and trip_id = "$trip_id" ORDER BY stop_sequence ASC')
-        query = q.substitute(stop_id = self.stop_id, trip_id = TripObj.trip_id)
-        self.cur.execute(query)
-        stops = self.cur.fetchall()
-        # Returns a list, because in some cases there are trips that
-        # visit the same stop twice (or potentially more) in one trip:
-        # loop routes.
-        return prepare_tuple(stops, DayObj)
+      # Returns a list, because in some cases there are trips that
+      # visit the same stop twice (or potentially more) in one trip:
+      # loop routes.
+      return prepare_tuple(stops, DayObj)
 
   def getStopSnappedToRoute(self, TripObj, projected=True, new=True):
     '''
@@ -2105,19 +2290,22 @@ if __name__ == '__main__':
   ################################################################################
   ########################## Testing Section #####################################
   ################################################################################
-
-  ## Testing PTTrip.intervalByIntervalPosition -- building the animation database!
+  
+  # Populating intervals table
+  ## This should be its own function for posterity
+  
+  '''
+  dur() # Initiate timer
+  
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-
-  dur() # Initiate timer
 
   allTrips = myDay.getAllTrips()
   dur('myDay.getAllTrips()') # How long did it take to get all trip objects for myDay?
   print len(allTrips), "to process."
 
   endtime = datetime.time(23) # End time for processing
-  i = 0
+  i = 7188
 
   for trip in allTrips: # For all trips on myDay
     current_time = datetime.datetime.now().time()
@@ -2125,8 +2313,10 @@ if __name__ == '__main__':
       dur() # Re-initiate timer, once for each trip
       myDatabase = Database(myDB)
       myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
+      processing =  "Processing Trip=%i" % trip.trip_id
+      print processing,
       trip.whereIsVehicle(myDay, write=True)
-      process="Trip=%s, i=%i, mode=%s myPTTrip.intervalByIntervalPosition(myDay, interval=%i)" % (trip.trip_id, i,)
+      process="Trip=%s, i=%i, myPTTrip.whereIsVehicle(myDay, write=True)" % (trip.trip_id, i,)
       dur(process) # How long did it take to process the record?
       i += 1 # Next index, in parallel with trip_id
 
@@ -2138,7 +2328,23 @@ if __name__ == '__main__':
   for i in range(0,5):
     sound.play()
     time.sleep(1)
-
+  '''
+  '''
+  import shapely.geometry
+  myDatabase = Database(myDB)
+  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
+  myTrip = PTTrip(myDB, 7188)
+  coords = myTrip.getShapelyLine().coords
+  print "vertex,wktpoint;"
+  for n, c in enumerate(coords):
+    print str(n) + "," + shapely.geometry.Point(c[0], c[1]).wkt + ";"
+  print ""
+  print myTrip.getShapelyLine().wkt
+  '''
+  
+  myDatabase = Database(myDB)
+  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
+  myDay.animateDay(40000, 50000, 2134, new=True)
   ################################################################################
   ################################ End ###########################################
   ################################################################################
