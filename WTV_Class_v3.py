@@ -20,7 +20,7 @@
 #      > getCanxServices()               :CAUTION:Returns a list of PTService objects that are cancelled according to the calendar_dates table. For Wellington I suspect this table is a little dodgy::
 #      > getServicesDay()                ::Returns a list of service IDs of services that are scheduled to run on self (Day). Accounts for exceptional additions and removals of services; but not the midnight bug, as a PTService is not a PTTrip::
 #      > plotModeSplitNVD3(databaseObj, city) ::Uses the Python-NVD3 library to plot a pie chart showing the breakdown of vehicle modes (num. services) in Day. Useful to compare over time, weekday vs. weekend, etc. <city> is str, used in the title of the chart::
-#      > animateDay()                    :Unfinished, but working::
+#      > animateDay(start, end, sourceproj=None, projected=False, projection=None) ::Uses basemap to build an animation of a city's public transport system for <start> seconds into self (Day), until <end> seconds into self(Day). <sourceproj> is an integer indicating the projection system that the intervals table stores the lat/lon information. See for e.g.: http://spatialreference.org/ref/epsg/2193/. <projected> refers to whether the output should be in projected coordinates; <projection> is related to this (target projection of output). ::
 #      > getActiveTrips(second)          ::Returns a list of PTTrip objects representing those trips that are running on self (Day) at <second>. Accounts for service cancellations and the "midnight bug"::
 #      > countActiveTrips(second)        ::Returns an integer count of the number of trips of any mode that are operating at <second> on self (Day), according to self.getActiveTrips(<second>)::
 #      > countActiveTripsByMode(second)  ::Returns an dictionary of {mode: integer} pairs similar to self.countActiveTrips(<second>) that breaks it down by mode::
@@ -610,21 +610,39 @@ class Day(Database):
       bokeh.plotting.show()
     return None
 
-  def animateDay(self, start, end, sourceproj=None, new=False):
+  def animateDay(self, start, end, llcrnrlon, llcrnrlat, latheight, aspectratio, sourceproj=None, projected=False, projecton=None, outoption="show", placetext='', skip=5, filename='TestOut.mp4'):
     '''
     Animates the public transport system for self day.
+    
+    # Timing within day
     <start> = start seconds since midnight on self (Day)
     <end> = see <start>
+    
+    # Text control
+    <placetext> = The heading along the top, e.g. "Wellington Region Public Transport"
+    
+    # Frame control
+    <llcrnlon> = lower-left corner longitude, e.g. 174.7
+    <llcrnlat> = lower-left cotner latitude, e.g. -41.4
+    <latheight> = height of the frame in latitude, e.g. 0.5
+    <aspectratio> = "equal", "4:3", "16:9"
+    
+    # Projection (or lack thereof)
     <sourceproj> = The projection system that the data in the intervals
     table is stored in. See: http://spatialreference.org/ref/epsg/2193/
     for example. Enter it as an integer, e.g. 2193 (EPSG format).
-    <new>: Control flow for new and deprecated methods.
+    
+    # Output control
+    <outoption> = "show", "video"; controls whether the output should be shown interactively.
+    <skip> = How many frames to skip each time (integer), e.g. 5
+    <filename> = if <outoption> == "video", then this controls the filename of the output
+    
+    TODO: Add capability to use projected=True.
     '''
-    import mpl_toolkits.basemap.pyproj as pyproj
     def make_GCS(latlist,lonlist,sourceproj):
       '''
       Rather than writing the intervals table in lat/lon values,
-      this function convers <x> and <y> from a <source> projected
+      this function converts <x> and <y> from a <source> projected
       coordinate system to lat/lon.
       Many thanks to John A. Stevenson:
       http://all-geo.org/volcan01010/2012/11/change-coordinates-with-pyproj/
@@ -635,298 +653,143 @@ class Day(Database):
         source = pyproj.Proj("+init=EPSG:%i" % sourceproj)
         return source(latlist, lonlist, inverse=True) # Tuple of two lists
     
-    if new == True:
-      '''
-      # Prepare plotting space
-      import shapely.geometry
-      matplotlib.rcParams['backend'] = "Qt4Agg"
-      from mpl_toolkits.basemap import Basemap
-      import pylab
-      '''
-      '''# deprecated
-      # get bounding box from data
-      # need to add: from shapely.geometry import Polygon
-      self.cur.execute('SELECT MAX(lat), MIN(lat), MAX(lon), MIN(lon) FROM intervals')
-      boundary = self.cur.fetchall()[0]
-      maxy, minx, miny, maxx = float(boundary[0]), float(boundary[3]), float(boundary[1]), float(boundary[2])
-      ll = make_GCS([minx], [miny], sourceproj)
-      ur = make_GCS([maxx], [maxy], sourceproj)
-      ul = make_GCS([minx], [maxy], sourceproj)
-      lr = make_GCS([maxx], [miny], sourceproj)
-      print ll, ur
-      llcrnrlon, llcrnrlat, urcrnrlon, urcrnrlat = ll[0][0], ll[1][0], ur[0][0], ur[1][0]
-      # Five vertices: it closes
-      shape = Polygon([(ll[0][0], ll[1][0]), (ul[0][0], ul[1][0]), (ur[0][0], ur[1][0]), (lr[0][0], lr[1][0]), (ll[0][0], ll[1][0])])
-      shapecentre = shape.centroid
-      centrex, centrey = shapecentre.x, shapecentre.y
-      # deprecated
-      '''
-      
-      # Set up background of animation
-      from matplotlib import pyplot as plt
-      from mpl_toolkits.basemap import Basemap
-      #fig = plt.figure(figsize=(5.90551*2, 3.14691*2), frameon=False, tight_layout=True)
-      fig = plt.figure(frameon=False, tight_layout=True)
-      llcrnrlon, llcrnrlat = 174.7, -41.4 # TODO: Parametricise the extent
-      # Control aspect ratio without distorting: upper right corner is
-      # variable; lower left is fixed.
-      urcrnrlon, urcrnrlat = llcrnrlon+(0.5*(4.0/3.0)), llcrnrlat+0.5 # 4:3 aspect ratio
-      #urcrnrlon, urcrnrlat = llcrnrlon+(0.5*(16.0/9.0)), llcrnrlat+0.5 # 16:9 aspect ratio
-      #urcrnrlon, urcrnrlat = llcrnrlon+0.5, llcrnrlat+0.5  # Equal aspect ratio
-      ax = plt.axes(xlim=(llcrnrlon,urcrnrlon), ylim=(llcrnrlat,urcrnrlat), frame_on=True, rasterized=False)
-      ax.get_xaxis().set_visible(False)
-      ax.get_yaxis().set_visible(False)
-      title_text = ax.text(0.89, 0.03, '', transform=ax.transAxes, fontsize=11, family='monospace', weight='heavy')
-      bus, = ax.plot([], [], 'o', ms=3, c='#BA5F22', alpha=1, zorder=2)
-      train, = ax.plot([], [], 'o', ms=4, c='#000000', alpha=1, zorder=2)
-      ferry, = ax.plot([], [], 'o', ms=3, c='#FFFFFF', alpha=1, zorder=2)
-      cablecar, = ax.plot([], [], 'o', ms=2, c='#FF0000', alpha=1, zorder=2)
-      # TODO: add more when there are more GTFS feeds
-      m = Basemap(llcrnrlon=llcrnrlon, llcrnrlat=llcrnrlat, urcrnrlon=urcrnrlon, urcrnrlat=urcrnrlat, resolution='f', area_thresh = 0)
-      m.drawcoastlines(linewidth=.2)
-      m.fillcontinents(color='#CDBC8E',lake_color='#677D6C')
-      m.drawmapboundary(fill_color='#677D6C')
-      
-      # Plot the background of each frame
-      def init():
-        title_text.set_text('')
-        bus.set_data([], [])
-        train.set_data([], [])
-        ferry.set_data([], [])
-        cablecar.set_data([], [])
-        return bus, train, ferry, cablecar, title_text
-        
-      # Prepare the positions to plot
-      posdict = {'Bus': {}, 'Rail': {}, 'Ferry': {}, 'Cable Car': {}}
-      query = 'SELECT seconds, lat, lon, route_type_desc FROM intervals WHERE seconds >= "%i" AND seconds <= "%i"' % (start, end)
-      self.cur.execute(query)
-      answer = self.cur.fetchall()
-      for a in answer:
-        second, lat, lon, mode = a[0], a[1], a[2], a[3]
-        if mode not in posdict:
-          posdict[mode] = {} # An inner dict for each mode
-        if second not in posdict[mode]:
-          posdict[mode][second] = ([], [])
-        posdict[mode][second][0].append(lat)
-        posdict[mode][second][1].append(lon)
-      answer = None
-      for mode in ['Bus', 'Rail', 'Ferry', 'Cable Car']:
-        for s in range(start, end):
-          try:
-            lon = posdict[mode][s][1]
-            lat = posdict[mode][s][0]
-          except KeyError:
-            # Mode doesn't operate at s
-            lon = []
-            lat = []
-          posdict[mode][s] = make_GCS(lon, lat, sourceproj)
-      
-      # Animation function: called sequentially
-      def animate(i):
-        # i starts at 0
-        i = i + start
-        time = str(datetime.timedelta(seconds=i))
-        title_text.set_text('%s' % time)
-        bus.set_data(posdict['Bus'][i][0], posdict['Bus'][i][1])
-        ##posdict['Bus'].pop(i) # use this if saving AND not showing
-        train.set_data(posdict['Rail'][i][0], posdict['Rail'][i][1])
-        ##posdict['Rail'].pop(i)
-        ferry.set_data(posdict['Ferry'][i][0], posdict['Ferry'][i][1])
-        ##posdict['Ferry'].pop(i)
-        cablecar.set_data(posdict['Cable Car'][i][0], posdict['Cable Car'][i][1])
-        ##posdict['Cable Car'].pop(i)
-        return bus, train, ferry, cablecar, title_text
-        
-      # call the animator
-      frames = end-start # How many frames (essentially the duration)
-      interval = 1 # New frame drawn every <interval> milliseconds. 1 means 1000 frames per second. 3 means 333 frames per second
-      blit = True # Only re-draw the bits that have changed
-      anim = animation.FuncAnimation(fig, animate, init_func=init, frames=frames, interval=1, blit=blit)
-
-      # save as an mp4
-      filename='test_systemanimate_wgtn.mp4'
-      writer='ffmpeg_file'
-      fps=576
-      #dpi=300
-      #bitrate = None # This can be used to influence file size
-      extra_args=['-vcodec', 'libx264']
-      #anim.save(filename, writer=writer, fps=fps, extra_args=extra_args)
-      plt.show()
-      
-      '''
-      shape = shapely.geometry.box(llcrnrlon, llcrnrlat, urcrnrlon, urcrnrlat)
-      centrex, centrey = shape.centroid.x, shape.centroid.y
-      fig = plt.figure()
-      for h in range(0, 23): # hour
-        seconds = [60*60*h, min(60*60*(h+1), 86400-1)] # Seconds at start and end of hour
-        if seconds[0] < start:
-          seconds[0] = start
-        if seconds[1] > end:
-          seconds[0] = end
-        query = 'SELECT seconds, lat, lon, route_type_desc FROM intervals WHERE seconds >= "%i" AND seconds <= "%i"' % (seconds[0], seconds[1])
-        self.cur.execute(query)
-        vehiclesinhour = self.cur.fetchall()
-        for s in range(seconds[0], seconds[1]):
-          current = [(veh[1], veh[2], veh[3]) for veh in vehiclesinhour if veh[0] == s]
-          buses_lat = [bus[0] for bus in current if bus[2] == "Bus"]
-          buses_lon = [bus[1] for bus in current if bus[2] == "Bus"]
-          cablecars_lat = [cc[0] for cc in current if cc[2] == "Cable Car"]
-          cablecars_lon = [cc[1] for cc in current if cc[2] == "Cable Car"]
-          trains_lat = [tr[0] for tr in current if tr[2] == "Rail"]
-          trains_lon = [tr[1] for tr in current if tr[2] == "Rail"]
-          ferries_lat = [fer[0] for fer in current if fer[2] == "Ferry"]
-          ferries_lon = [fer[1] for fer in current if fer[2] == "Ferry"]
-          # Plot these
-          m = Basemap(llcrnrlon=llcrnrlon, llcrnrlat=llcrnrlat, urcrnrlon=urcrnrlon, urcrnrlat=urcrnrlat, lon_0=centrex, lat_0=centrey, resolution='f', area_thresh = 0, projection='tmerc')
-          m.drawcoastlines(linewidth=.2)
-          m.fillcontinents(color='#CDBC8E',lake_color='#677D6C')
-          m.drawmapboundary(fill_color='#677D6C')
-          try:
-            if sourceproj is not None:
-              busGCS = make_GCS(buses_lon, buses_lat, sourceproj)
-              buses_lon, buses_lat = busGCS[0], busGCS[1]
-            x,y = m(buses_lon,buses_lat)
-            m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
-          except:
-            x,y = m([0.0],[0.0])
-            m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
-            
-          try:
-            if sourceproj is not None:
-              ferryGCS = make_GCS(ferries_lon, ferries_lat, sourceproj)
-              ferries_lon, ferries_lat = ferryGCS[0], ferryGCS[1]
-            x,y = m(ferries_lon,ferries_lat)
-            m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
-          except:
-            x,y = m([0.0],[0.0])
-            m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
-
-          try:
-            if sourceproj is not None:
-              cablecarGCS = make_GCS(cablecars_lon, cablecars_lat, sourceproj)
-              cablecars_lon, cablecars_lat = cablecarGCS[0], cablecarGCS[1]
-            x,y = m(cablecars_lon,cablecars_lat)
-            m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
-          except:
-            x,y = m([0.0],[0.0])
-            m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
-
-          try:
-            if sourceproj is not None:
-              trainGCS = make_GCS(trains_lon, trains_lat, sourceproj)
-              trains_lon, trains_lat = trainGCS[0], trainGCS[1]
-            x,y = m(trains_lon,trains_lat)
-            m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
-          except:
-            x,y = m([0.0],[0.0])
-            m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
-            
-          title = "Time=%i" % s
-          plt.title(title)
-          
-          filename = "Testing/TestImages/%i.png" % s
-          
-          #plt.show()
-          plt.savefig(filename)
-          
-          # Moves to next second, then next hour
-        
+    import mpl_toolkits.basemap.pyproj as pyproj ## TODO: Set up target projection option
+    from matplotlib import pyplot as plt
+    from mpl_toolkits.basemap import Basemap
+    
+    tailallowance = 15*60 # 15 minute tails
+    
+    # Set up frame of animation
+    fig = plt.figure(frameon=False, tight_layout=True)
+    if aspectratio == "4:3":
+       # 4:3 aspect ratio
+      urcrnrlon, urcrnrlat = llcrnrlon+(latheight*(4.0/3.0)), llcrnrlat+latheight
+    elif aspectratio == "16:9":
+      # 16:9 aspect ratio
+      urcrnrlon, urcrnrlat = llcrnrlon+(latheight*(16.0/9.0)), llcrnrlat+latheight
+    elif aspectratip == "equal":
+      # Equal aspect ratio
+      urcrnrlon, urcrnrlat = llcrnrlon+latheight, llcrnrlat+latheight
     else:
-      matplotlib.rcParams['backend'] = "Qt4Agg"
-      from mpl_toolkits.basemap import Basemap
-      from shapely.geometry import Polygon
-      import pylab
-
-      self.cur.execute('SELECT MAX(stop_lat), MIN(stop_lat), MAX(stop_lon), MIN(STOP_lon) FROM stops')
-      boundary = self.cur.fetchall()[0]
-      maxy, miny, maxx, minx = boundary[0], boundary[1], boundary[2], boundary[3]
-
-      #boundary = Polygon([(minx, maxy), (maxx, maxy), (maxx, miny), (minx, miny)])
-      #centrex, centrey = boundary.centroid.x, boundary.centroid.y
-      centrex, centrey = 174.777222, -41.2888889
-      maxy, minx, miny, maxx = -41, 174.6, -41.5, 175.1
+      raise CustomException("aspectratio must be one of '4:3', '16:9', 'equal'")
+    
+    ax = plt.axes(xlim=(llcrnrlon,urcrnrlon), ylim=(llcrnrlat,urcrnrlat), frame_on=True, rasterized=False)
+    ax.get_xaxis().set_visible(False)
+    ax.get_yaxis().set_visible(False)
+    place_text  = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=11, family='sans-serif')
+    time_text = ax.text(0.89, 0.03, '', transform=ax.transAxes, fontsize=11, family='monospace', weight='heavy')
+    day_text = ax.text(0.89, 0.07, '', transform=ax.transAxes, fontsize=11, family='sans-serif')
+    author_text = ax.text(0.02, 0.03, '', transform=ax.transAxes, fontsize=9, family='sans-serif', color='black')
+    allvehicles, = ax.plot([], [], '.', ms=0.5, c='#C2A3FF', alpha=1, zorder=1) # Vehicle tails
+    bus, = ax.plot([], [], 'o', ms=3, c='#e41a1c', alpha=1, zorder=3) # Bus colour, BA5F22
+    train, = ax.plot([], [], 'o', ms=4, c='#377eb8', alpha=1, zorder=3) # Train colour, 000000
+    ferry, = ax.plot([], [], 'o', ms=3, c='#4daf4a', alpha=1, zorder=3) # Ferry colour, FFFFFF
+    cablecar, = ax.plot([], [], 'o', ms=2, c='#984ea3', alpha=1, zorder=3) # Cable Car colour, FF0000
+    # TODO: add more modes when there are more GTFS feeds
+    
+    # Establish basemap object; super-background
+    m = Basemap(llcrnrlon=llcrnrlon, llcrnrlat=llcrnrlat, urcrnrlon=urcrnrlon, urcrnrlat=urcrnrlat, resolution='f', area_thresh = 0)
+    m.drawcoastlines(linewidth=.2)
+    m.fillcontinents(color='#FFFFFF',lake_color='#D8D8E6') # Land colour, lake colour {"old": ('#CDBC8E', '#677D6C')}
+    m.drawmapboundary(fill_color='#D8D8E6') # Ocean colour {"old": '#677D6C'}
+    
+    # Plot the background of each frame
+    def init():
+      time_text.set_text('')
+      place_text.set_text('')
+      day_text.set_text(self.dayOfWeekStr.title())
+      author_text.set_text('')
+      bus.set_data([], [])
+      train.set_data([], [])
+      ferry.set_data([], [])
+      cablecar.set_data([], [])
+      allvehicles.set_data([], [])
+      return allvehicles, bus, train, ferry, cablecar, time_text, author_text, place_text
       
-      print start, end
-      for i in range(start, end+1):
-
-        m = Basemap(llcrnrlon=minx, llcrnrlat=miny, urcrnrlon=maxx, urcrnrlat=maxy, resolution='f',projection='cass',lon_0=centrex, lat_0=centrey)
-        m.drawcoastlines(linewidth=.2)
-        m.fillcontinents(color='#CDBC8E',lake_color='#677D6C')
-        m.drawmapboundary(fill_color='#677D6C')
-
-        buslats, buslons, tralats, tralons, ccllats, ccllons, frylats, frylons = [], [], [], [], [], [], [], []
-
-        q = Template('SELECT seconds, lat, lon, route_type_desc FROM intervals WHERE seconds = "$second"')
-        query = q.substitute(second = i)
-        self.cur.execute(query)
-        active = self.cur.fetchall()
-
-        for vehicle in active:
-          if vehicle[3] == "Bus":
-            buslons.append(vehicle[1])
-            buslats.append(vehicle[2])
-          elif vehicle[3] == "Rail":
-            tralons.append(vehicle[1])
-            tralats.append(vehicle[2])
-          elif vehicle[3] == "Ferry":
-            frylons.append(vehicle[1])
-            frylats.append(vehicle[2])
-          elif vehicle[3] == "Cable Car":
-            ccllons.append(vehicle[1])
-            ccllats.append(vehicle[2])
-
+    # Prepare the actual positions to plot
+    posdict = {'Bus': {}, 'Rail': {}, 'Ferry': {}, 'Cable Car': {}, 'All': {}}
+    query = 'SELECT seconds, lat, lon, route_type_desc FROM intervals WHERE seconds >= "%i" AND seconds <= "%i"' % (start-tailallowance, end)
+    self.cur.execute(query)
+    answer = self.cur.fetchall()
+    for a in answer:
+      second, lat, lon, mode = a[0], a[1], a[2], a[3]
+      if second not in posdict[mode]:
+        posdict[mode][second] = ([], [])
+      posdict[mode][second][0].append(lat)
+      posdict[mode][second][1].append(lon)
+      if second not in posdict['All']:
+        posdict['All'][second] = ([], [])
+      posdict['All'][second][0].append(lat)
+      posdict['All'][second][1].append(lon)
+    #answer = None
+    del answer
+    for mode in ['Bus', 'Rail', 'Ferry', 'Cable Car', 'All']:
+      for s in range(start, end):
         try:
-          x,y = m(buslons,buslats)
-          m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
-        except:
-          x,y = m([0.0],[0.0])
-          m.scatter(x,y,c='#BA5F22',s=5, alpha=1, zorder=2, lw=0)
+          lon, lat = posdict[mode][s][1], posdict[mode][s][0]
+        except KeyError:
+          # Mode doesn't operate at s
+          lon, lat = [], []
+        posdict[mode][s] = make_GCS(lon, lat, sourceproj)
+    
+    # Animation function: called sequentially
+    def animate(i):
+      # i starts at 0
+      i = i + start + tailallowance
+      skips = 1
+      i = i + (skip * skips)
+      if i >= end:
+        i = end - 1
+        
+      # Tails
+      # These will be ordered... could do some cool things with this...
+      xs = [[x for x in posdict['All'][s][0]] for s in range(i-tailallowance, i)]
+      ys = [[y for y in posdict['All'][s][1]] for s in range(i-tailallowance, i)]
+      # ...but not after they have been flattened... here
+      xs = [item for sublist in xs for item in sublist]
+      ys = [item for sublist in ys for item in sublist]
+      # Set allvehicles
+      allvehicles.set_data(xs, ys)
+      
+      # Current vehicle positions
+      time = str(datetime.timedelta(seconds=i))
+      time_text.set_text('%s' % time)
+      bus.set_data(posdict['Bus'][i][0], posdict['Bus'][i][1])
+      train.set_data(posdict['Rail'][i][0], posdict['Rail'][i][1])
+      ferry.set_data(posdict['Ferry'][i][0], posdict['Ferry'][i][1])
+      cablecar.set_data(posdict['Cable Car'][i][0], posdict['Cable Car'][i][1])
+      
+      if i < (start + 3600):
+        # Fade out control
+        author_text.set_text('Richard Law | AvsB.co.nz')
+        place_text.set_text(placetext)
+        alpha_author = max(0, 1-(i-start)/900.0)
+        alpha_place = max(0, 1-(i-start)/1800.0)
+        author_text.set_alpha(alpha_author)
+        place_text.set_alpha(alpha_place)
+      else:
+        author_text.set_text('')
+        place_text.set_text('')
+      skips += 1
+        
+      return allvehicles, bus, train, ferry, cablecar, time_text, author_text, place_text
+      
+    # call the animator
+    frames = end-start # How many frames (essentially the duration)
+    interval = 0.5 # New frame drawn every <interval> milliseconds. 1 means 1000 frames per second. 3 means 333 frames per second
+    blit = True # Only re-draw the bits that have changed
+    anim = animation.FuncAnimation(fig, animate, init_func=init, frames=frames, interval=interval, blit=blit)
 
-        try:
-          x,y = m(frylons,frylats)
-          m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
-        except:
-          x,y = m([0.0],[0.0])
-          m.scatter(x,y,c='#FFFFFF',s=5, alpha=1, zorder=2, lw=0)
-
-        try:
-          x,y = m(ccllons,ccllats)
-          m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
-        except:
-          x,y = m([0.0],[0.0])
-          m.scatter(x,y,c='#FF0000',s=5, alpha=1, zorder=2, lw=0)
-
-        try:
-          x,y = m(tralons,tralats)
-          m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
-        except:
-          x,y = m([0.0],[0.0])
-          m.scatter(x,y,c='#000000',s=5, alpha=1, zorder=2, lw=0)
-
-        title = "Time=%i" % i
-        plt.title(title)
-
-        filename = "Testing/TestImages/%i.png" % i
-        print filename
-        plt.savefig(filename)
-
-        plt.clf()
-
-      import cv2, cv
-      from PIL import Image
-      from StringIO import StringIO
-      sample = cv2.imread("Testing/TestImages/" + str(start) + ".png")
-      fourcc = cv.CV_FOURCC('D', 'I', 'V', 'X')
-      fps = 100 # Note: Chris was doing 10 minutes per second
-                # For interval=1, that's 600
-      height, width, layers = sample.shape
-      video = cv2.VideoWriter('TestImages/Video_v2.avi', fourcc, fps, (width,height), 1);
-
-      for i in range(start, end+1):
-        img = "Testing/TestImages/%i.png" % i
-        cap = cv2.imread(img)
-        video.write(cap)
-      '''
+    if outoption == "show":
+      plt.show()
+    elif outoption == "video":
+      # save as an mp4
+      #bitrate = None # This could be used to influence file size, too
+      writer='ffmpeg_file'
+      fps=576/float(skip)
+      dpi=175
+      extra_args=['-vcodec', 'libx264']
+      anim.save(filename, writer=writer, fps=fps, dpi=dpi, extra_args=extra_args)
       
 class Mode(Database):
   '''
@@ -2342,9 +2205,10 @@ if __name__ == '__main__':
   print myTrip.getShapelyLine().wkt
   '''
   
+
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-  myDay.animateDay(40000, 50000, 2134, new=True)
+  myDay.animateDay(70000, 80000, 174.7, -41.35, .25, "16:9", sourceproj=2134, projected=False, projecton=None, outoption="show", placetext="Wellington Public Transport", skip=5, filename='Testing/test_systemanimate_wgtn2.mp4')
   ################################################################################
   ################################ End ###########################################
   ################################################################################
