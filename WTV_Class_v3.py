@@ -661,6 +661,7 @@ class Day(Database):
     
     # Set up frame of animation
     fig = plt.figure(frameon=False, tight_layout=True)
+    fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=None, hspace=None)
     if aspectratio == "4:3":
        # 4:3 aspect ratio
       urcrnrlon, urcrnrlat = llcrnrlon+(latheight*(4.0/3.0)), llcrnrlat+latheight
@@ -676,38 +677,51 @@ class Day(Database):
     ax = plt.axes(xlim=(llcrnrlon,urcrnrlon), ylim=(llcrnrlat,urcrnrlat), frame_on=True, rasterized=False)
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
-    place_text  = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=11, family='sans-serif')
-    time_text = ax.text(0.89, 0.03, '', transform=ax.transAxes, fontsize=11, family='monospace', weight='heavy')
-    day_text = ax.text(0.89, 0.07, '', transform=ax.transAxes, fontsize=11, family='sans-serif')
-    author_text = ax.text(0.02, 0.03, '', transform=ax.transAxes, fontsize=9, family='sans-serif', color='black')
-    allvehicles, = ax.plot([], [], '.', ms=0.5, c='#C2A3FF', alpha=1, zorder=1) # Vehicle tails
-    bus, = ax.plot([], [], 'o', ms=3, c='#e41a1c', alpha=1, zorder=3) # Bus colour, BA5F22
-    train, = ax.plot([], [], 'o', ms=4, c='#377eb8', alpha=1, zorder=3) # Train colour, 000000
-    ferry, = ax.plot([], [], 'o', ms=3, c='#4daf4a', alpha=1, zorder=3) # Ferry colour, FFFFFF
-    cablecar, = ax.plot([], [], 'o', ms=2, c='#984ea3', alpha=1, zorder=3) # Cable Car colour, FF0000
-    # TODO: add more modes when there are more GTFS feeds
+    textcolor = '#FFF5EE'
+    place_text  = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=11, family='sans-serif', color=textcolor)
+    time_text = ax.text(0.89, 0.03, '', transform=ax.transAxes, fontsize=11, family='monospace', weight='heavy', color=textcolor)
+    day_text = ax.text(0.89, 0.07, '', transform=ax.transAxes, fontsize=11, family='sans-serif', color=textcolor)
+    date_text = ax.text(0.89, 0.11, '', transform=ax.transAxes, fontsize=9, family='monospace', color=textcolor, alpha=0.15)
+    author_text = ax.text(0.02, 0.03, '', transform=ax.transAxes, fontsize=9, family='sans-serif', color=textcolor)
+    tailsize=0.75
+    bus, = ax.plot([], [], 'o', ms=3, c='#d95f02', alpha=1, zorder=3) # Bus colour, BA5F22
+    min15headway_bus, = ax.plot([], [], '.', ms=tailsize, c='#fc8d62', alpha=1, zorder=2) # Bus tails, =<15 minute frequency
+    train, = ax.plot([], [], 'o', ms=4, c='#e7298a', alpha=1, zorder=3) # Train colour, 000000
+    min15headway_train, = ax.plot([], [], '.', ms=tailsize, c='#e78ac3', alpha=1, zorder=2) # Train tails, =<15 minute frequency
+    ferry, = ax.plot([], [], 'o', ms=3, c='#7570b3', alpha=1, zorder=3) # Ferry colour, FFFFFF
+    min15headway_ferry, = ax.plot([], [], '.', ms=tailsize, c='#8da0cb', alpha=1, zorder=2) # Ferry tails, =<15 minute frequency
+    cablecar, = ax.plot([], [], 'o', ms=2, c='#1b9e77', alpha=1, zorder=3) # Cable Car colour, FF0000
+    min15headway_cablecar, = ax.plot([], [], '.', ms=tailsize, c='#66c2a5', alpha=1, zorder=2) # Cable car tails, =<15 minute frequency
+    # NOTE: add more modes when there are more GTFS feeds (that have additional modes)
     
     # Establish basemap object; super-background
     m = Basemap(llcrnrlon=llcrnrlon, llcrnrlat=llcrnrlat, urcrnrlon=urcrnrlon, urcrnrlat=urcrnrlat, resolution='f', area_thresh = 0)
     m.drawcoastlines(linewidth=.2)
-    m.fillcontinents(color='#FFFFFF',lake_color='#D8D8E6') # Land colour, lake colour {"old": ('#CDBC8E', '#677D6C')}
-    m.drawmapboundary(fill_color='#D8D8E6') # Ocean colour {"old": '#677D6C'}
+    landcolour = '#474747' # old: '#CDBC8E', '#677D6C'
+    oceancolour = '#4A4A4A' # old: '#677D6C
+    lakecolour = oceancolour
+    m.fillcontinents(color=landcolour,lake_color=lakecolour)
+    m.drawmapboundary(fill_color=oceancolour)
     
     # Plot the background of each frame
     def init():
       time_text.set_text('')
       place_text.set_text('')
       day_text.set_text(self.dayOfWeekStr.title())
+      date_text.set_text(self.isoDate[0:10])
       author_text.set_text('')
       bus.set_data([], [])
       train.set_data([], [])
       ferry.set_data([], [])
       cablecar.set_data([], [])
-      allvehicles.set_data([], [])
-      return allvehicles, bus, train, ferry, cablecar, time_text, author_text, place_text
+      min15headway_bus.set_data([], [])
+      min15headway_train.set_data([], [])
+      min15headway_ferry.set_data([], [])
+      min15headway_cablecar.set_data([], [])
+      return min15headway_cablecar, min15headway_ferry, min15headway_bus, min15headway_train, bus, train, ferry, cablecar, time_text, author_text, place_text, date_text
       
     # Prepare the actual positions to plot
-    posdict = {'Bus': {}, 'Rail': {}, 'Ferry': {}, 'Cable Car': {}, 'All': {}}
+    posdict = {'Bus': {}, 'Rail': {}, 'Ferry': {}, 'Cable Car': {}}
     query = 'SELECT seconds, lat, lon, route_type_desc FROM intervals WHERE seconds >= "%i" AND seconds <= "%i"' % (start-tailallowance, end)
     self.cur.execute(query)
     answer = self.cur.fetchall()
@@ -717,13 +731,8 @@ class Day(Database):
         posdict[mode][second] = ([], [])
       posdict[mode][second][0].append(lat)
       posdict[mode][second][1].append(lon)
-      if second not in posdict['All']:
-        posdict['All'][second] = ([], [])
-      posdict['All'][second][0].append(lat)
-      posdict['All'][second][1].append(lon)
-    #answer = None
-    del answer
-    for mode in ['Bus', 'Rail', 'Ferry', 'Cable Car', 'All']:
+    del answer # Free a large amount of memory
+    for mode in ['Bus', 'Rail', 'Ferry', 'Cable Car']:
       for s in range(start, end):
         try:
           lon, lat = posdict[mode][s][1], posdict[mode][s][0]
@@ -742,14 +751,26 @@ class Day(Database):
         i = end - 1
         
       # Tails
-      # These will be ordered... could do some cool things with this...
-      xs = [[x for x in posdict['All'][s][0]] for s in range(i-tailallowance, i)]
-      ys = [[y for y in posdict['All'][s][1]] for s in range(i-tailallowance, i)]
-      # ...but not after they have been flattened... here
-      xs = [item for sublist in xs for item in sublist]
-      ys = [item for sublist in ys for item in sublist]
-      # Set allvehicles
-      allvehicles.set_data(xs, ys)
+      def makeTails(past, present, mode):
+        # These will be ordered... could do some cool things with this...
+        xs = [[x for x  in posdict[mode][s][0]] for s in range(past, present)] # fifteen minutes before present
+        ys = [[y for y in posdict[mode][s][1]] for s in range(max(0, i-15*60), i-1)]
+        # ...but not after they have been flattened... here
+        xs = [item for sublist in xs for item in sublist]
+        ys = [item for sublist in ys for item in sublist]
+        return (xs, ys)
+      
+      # Get the data for the tails
+      fifteenminsago, present = max(0, i-15*60), i-1
+      min15tails_bus = makeTails(fifteenminsago, present, 'Bus')
+      min15tails_train = makeTails(fifteenminsago, present, 'Rail')
+      min15tails_ferry = makeTails(fifteenminsago, present, 'Cable Car')
+      min15tails_cablecar = makeTails(fifteenminsago, present, 'Ferry')
+      # Set the data for the tails
+      min15headway_bus.set_data(min15tails_bus[0], min15tails_bus[1])
+      min15headway_train.set_data(min15tails_train[0], min15tails_train[1])
+      min15headway_ferry.set_data(min15tails_ferry[0], min15tails_ferry[1])
+      min15headway_cablecar.set_data(min15tails_cablecar[0], min15tails_cablecar[1])
       
       # Current vehicle positions
       time = str(datetime.timedelta(seconds=i))
@@ -759,12 +780,13 @@ class Day(Database):
       ferry.set_data(posdict['Ferry'][i][0], posdict['Ferry'][i][1])
       cablecar.set_data(posdict['Cable Car'][i][0], posdict['Cable Car'][i][1])
       
-      if i < (start + 3600):
+      if i < (start + 1800):
         # Fade out control
-        author_text.set_text('Richard Law | AvsB.co.nz')
+        author_text.set_text('Richard Law | CC BY-NC')
         place_text.set_text(placetext)
-        alpha_author = max(0, 1-(i-start)/900.0)
-        alpha_place = max(0, 1-(i-start)/1800.0)
+        alpha_author = max(0, 1-(i-start-tailallowance)/600.0)
+        alpha_place = max(0, 1-(i-start-tailallowance)/1800.0)
+        alpha_date = alpha_place
         author_text.set_alpha(alpha_author)
         place_text.set_alpha(alpha_place)
       else:
@@ -772,7 +794,7 @@ class Day(Database):
         place_text.set_text('')
       skips += 1
         
-      return allvehicles, bus, train, ferry, cablecar, time_text, author_text, place_text
+      return min15headway_cablecar, min15headway_ferry, min15headway_bus, min15headway_train, bus, train, ferry, cablecar, time_text, author_text, place_text, date_text
       
     # call the animator
     frames = end-start # How many frames (essentially the duration)
@@ -787,7 +809,7 @@ class Day(Database):
       #bitrate = None # This could be used to influence file size, too
       writer='ffmpeg_file'
       fps=576/float(skip)
-      dpi=175
+      dpi=200
       extra_args=['-vcodec', 'libx264']
       anim.save(filename, writer=writer, fps=fps, dpi=dpi, extra_args=extra_args)
       
@@ -2205,10 +2227,9 @@ if __name__ == '__main__':
   print myTrip.getShapelyLine().wkt
   '''
   
-
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-  myDay.animateDay(70000, 80000, 174.7, -41.35, .25, "16:9", sourceproj=2134, projected=False, projecton=None, outoption="show", placetext="Wellington Public Transport", skip=5, filename='Testing/test_systemanimate_wgtn2.mp4')
+  myDay.animateDay(40000, 50000, 174.7, -41.35, .25, "4:3", sourceproj=2134, projected=False, projecton=None, outoption="video", placetext="Wellington Public Transport", skip=5, filename='Testing/test_systemanimate_wgtn43.mp4')
   ################################################################################
   ################################ End ###########################################
   ################################################################################
