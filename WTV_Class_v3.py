@@ -20,7 +20,7 @@
 #      > getCanxServices()               :CAUTION:Returns a list of PTService objects that are cancelled according to the calendar_dates table. For Wellington I suspect this table is a little dodgy::
 #      > getServicesDay()                ::Returns a list of service IDs of services that are scheduled to run on self (Day). Accounts for exceptional additions and removals of services; but not the midnight bug, as a PTService is not a PTTrip::
 #      > plotModeSplitNVD3(databaseObj, city) ::Uses the Python-NVD3 library to plot a pie chart showing the breakdown of vehicle modes (num. services) in Day. Useful to compare over time, weekday vs. weekend, etc. <city> is str, used in the title of the chart::
-#      > animateDay(start, end, sourceproj=None, projected=False, projection=None) ::Uses basemap to build an animation of a city's public transport system for <start> seconds into self (Day), until <end> seconds into self(Day). <sourceproj> is an integer indicating the projection system that the intervals table stores the lat/lon information. See for e.g.: http://spatialreference.org/ref/epsg/2193/. <projected> refers to whether the output should be in projected coordinates; <projection> is related to this (target projection of output). ::
+#      > animateDay(self, start, end, llcrnrlon, llcrnrlat, latheight, aspectratio, sourceproj=None, projected=False, targetproj=None, lat_0=None, lon_0=None, outoption="show", placetext='', skip=5, filepath='', filename='TestOut.mp4') ::See the method for parameter explanations::
 #      > getActiveTrips(second)          ::Returns a list of PTTrip objects representing those trips that are running on self (Day) at <second>. Accounts for service cancellations and the "midnight bug"::
 #      > countActiveTrips(second)        ::Returns an integer count of the number of trips of any mode that are operating at <second> on self (Day), according to self.getActiveTrips(<second>)::
 #      > countActiveTripsByMode(second)  ::Returns an dictionary of {mode: integer} pairs similar to self.countActiveTrips(<second>) that breaks it down by mode::
@@ -610,7 +610,7 @@ class Day(Database):
       bokeh.plotting.show()
     return None
 
-  def animateDay(self, start, end, llcrnrlon, llcrnrlat, latheight, aspectratio, sourceproj=None, projected=False, projecton=None, outoption="show", placetext='', skip=5, filename='TestOut.mp4'):
+  def animateDay(self, start, end, llcrnrlon, llcrnrlat, latheight, aspectratio, sourceproj=None, projected=False, targetproj=None, lat_0=None, lon_0=None, outoption="show", placetext='', skip=5, filepath='', filename='TestOut.mp4'):
     '''
     Animates the public transport system for self day.
     
@@ -622,24 +622,33 @@ class Day(Database):
     <placetext> = The heading along the top, e.g. "Wellington Region Public Transport"
     
     # Frame control
-    <llcrnlon> = lower-left corner longitude, e.g. 174.7
-    <llcrnlat> = lower-left cotner latitude, e.g. -41.4
+    <llcrnrlon> = lower-left corner longitude, e.g. 174.7
+    <llcrnrlat> = lower-left cotner latitude, e.g. -41.4
     <latheight> = height of the frame in latitude, e.g. 0.5
     <aspectratio> = "equal", "4:3", "16:9"
+    NOTE: Frame coordinates should be given in WGS84 (not constrained
+    to this, but would need changing).
     
-    # Projection (or lack thereof)
+    # Projection
     <sourceproj> = The projection system that the data in the intervals
     table is stored in. See: http://spatialreference.org/ref/epsg/2193/
     for example. Enter it as an integer, e.g. 2193 (EPSG format).
+    <projected> (Boolean), for whether the output should be projected in
+    something other than a standard lat/lon cylindrical projection.
+    <targetproj> controls what this is. Example: 'tmerc'.
+    See http://matplotlib.org/basemap/api/basemap_api.html for more
+    options.
+    <lon_0> and <lat_0> are needed for 'tmerc' and other projections.
     
     # Output control
-    <outoption> = "show", "video"; controls whether the output should be shown interactively.
-    <skip> = How many frames to skip each time (integer), e.g. 5
-    <filename> = if <outoption> == "video", then this controls the filename of the output
-    
-    TODO: Add capability to use projected=True.
+    <outoption> = "show", "video"; controls whether the output should
+    be shown interactively (show), recorded to a video file (video).
+    <skip> = How many frames to skip each time (integer), e.g. 5.
+    <filename> = if <outoption> == "video", then this controls the
+    filename of the output.
+    <flilpath> gives the directory it is to be stored in.
     '''
-    def make_GCS(latlist,lonlist,sourceproj):
+    def make_GCS(lonlist,latlist,fromsourceproj):
       '''
       Rather than writing the intervals table in lat/lon values,
       this function converts <x> and <y> from a <source> projected
@@ -648,16 +657,27 @@ class Day(Database):
       http://all-geo.org/volcan01010/2012/11/change-coordinates-with-pyproj/
       '''
       if latlist == [] and lonlist == []:
-        return (latlist, lonlist)
+        return (lonlist, latlist)
       else:
-        source = pyproj.Proj("+init=EPSG:%i" % sourceproj)
-        return source(latlist, lonlist, inverse=True) # Tuple of two lists
+        source = pyproj.Proj("+init=EPSG:%i" % fromsourceproj)
+        # Return the lat lons (WGS84)
+        return source(lonlist, latlist, inverse=True) # Tuple of two lists
     
-    import mpl_toolkits.basemap.pyproj as pyproj ## TODO: Set up target projection option
+    def thin(posdict, everyN):
+      '''
+      Creates an index of only those seconds in self (Day) that will
+      actually have a dedicated frame.
+      '''
+      newdict, posindex = {}, []
+      for mode in posdict:
+        for k in posdict[mode]:
+          if k % everyN == 0 and k not in posindex:
+            posindex.append(k)
+      return posindex
+        
+    import mpl_toolkits.basemap.pyproj as pyproj
     from matplotlib import pyplot as plt
     from mpl_toolkits.basemap import Basemap
-    
-    tailallowance = 15*60 # 15 minute tails
     
     # Set up frame of animation
     fig = plt.figure(frameon=False, tight_layout=True)
@@ -677,28 +697,38 @@ class Day(Database):
     ax = plt.axes(xlim=(llcrnrlon,urcrnrlon), ylim=(llcrnrlat,urcrnrlat), frame_on=True, rasterized=False)
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
-    textcolor = '#FFF5EE'
+    ax = fig.add_axes([0, 0, 1, 1])
+    textcolor = '#FFF5EE' # Eggshell white
     place_text  = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=11, family='sans-serif', color=textcolor)
-    time_text = ax.text(0.89, 0.03, '', transform=ax.transAxes, fontsize=11, family='monospace', weight='heavy', color=textcolor)
-    day_text = ax.text(0.89, 0.07, '', transform=ax.transAxes, fontsize=11, family='sans-serif', color=textcolor)
-    date_text = ax.text(0.89, 0.11, '', transform=ax.transAxes, fontsize=9, family='monospace', color=textcolor, alpha=0.15)
+    time_text = ax.text(0.87, 0.03, '', transform=ax.transAxes, fontsize=11, family='monospace', weight='heavy', color=textcolor)
+    day_text = ax.text(0.87, 0.07, '', transform=ax.transAxes, fontsize=11, family='sans-serif', color=textcolor)
+    date_text = ax.text(0.87, 0.11, '', transform=ax.transAxes, fontsize=9, family='monospace', color=textcolor)
     author_text = ax.text(0.02, 0.03, '', transform=ax.transAxes, fontsize=9, family='sans-serif', color=textcolor)
     tailsize=0.75
     bus, = ax.plot([], [], 'o', ms=3, c='#d95f02', alpha=1, zorder=3) # Bus colour, BA5F22
     min15headway_bus, = ax.plot([], [], '.', ms=tailsize, c='#fc8d62', alpha=1, zorder=2) # Bus tails, =<15 minute frequency
-    train, = ax.plot([], [], 'o', ms=4, c='#e7298a', alpha=1, zorder=3) # Train colour, 000000
-    min15headway_train, = ax.plot([], [], '.', ms=tailsize, c='#e78ac3', alpha=1, zorder=2) # Train tails, =<15 minute frequency
+    train, = ax.plot([], [], 'o', ms=4, c='#1b9e77', alpha=1, zorder=3) # Train colour, 000000, e7298a
+    min15headway_train, = ax.plot([], [], '.', ms=tailsize, c='#66c2a5', alpha=1, zorder=2) # Train tails, =<15 minute frequency, e78ac3
     ferry, = ax.plot([], [], 'o', ms=3, c='#7570b3', alpha=1, zorder=3) # Ferry colour, FFFFFF
     min15headway_ferry, = ax.plot([], [], '.', ms=tailsize, c='#8da0cb', alpha=1, zorder=2) # Ferry tails, =<15 minute frequency
-    cablecar, = ax.plot([], [], 'o', ms=2, c='#1b9e77', alpha=1, zorder=3) # Cable Car colour, FF0000
-    min15headway_cablecar, = ax.plot([], [], '.', ms=tailsize, c='#66c2a5', alpha=1, zorder=2) # Cable car tails, =<15 minute frequency
+    cablecar, = ax.plot([], [], 'o', ms=2, c='#e7298a', alpha=1, zorder=3) # Cable Car colour, FF0000, 1b9e77
+    min15headway_cablecar, = ax.plot([], [], '.', ms=tailsize, c='#e78ac3', alpha=1, zorder=2) # Cable car tails, =<15 minute frequency, 66c2a5
     # NOTE: add more modes when there are more GTFS feeds (that have additional modes)
     
     # Establish basemap object; super-background
-    m = Basemap(llcrnrlon=llcrnrlon, llcrnrlat=llcrnrlat, urcrnrlon=urcrnrlon, urcrnrlat=urcrnrlat, resolution='f', area_thresh = 0)
+    if projected == True:
+      print "Using %s projection for Basemap, lat_0=0.0, lon_0=173.0" % (targetproj)
+      projection = targetproj
+      lon_0 = lon_0
+      lat_0 = lat_0
+    else:
+      projection = 'cyl' # Default
+      lat_0 = None
+      lon_0 = None
+    m = Basemap(llcrnrlon=llcrnrlon, llcrnrlat=llcrnrlat, urcrnrlon=urcrnrlon, urcrnrlat=urcrnrlat, resolution='f', projection=projection, lon_0=lon_0, lat_0=lat_0, area_thresh = 0)
     m.drawcoastlines(linewidth=.2)
     landcolour = '#474747' # old: '#CDBC8E', '#677D6C'
-    oceancolour = '#4A4A4A' # old: '#677D6C
+    oceancolour = '#666666' # old: '#677D6C, 4A4A4A
     lakecolour = oceancolour
     m.fillcontinents(color=landcolour,lake_color=lakecolour)
     m.drawmapboundary(fill_color=oceancolour)
@@ -721,6 +751,7 @@ class Day(Database):
       return min15headway_cablecar, min15headway_ferry, min15headway_bus, min15headway_train, bus, train, ferry, cablecar, time_text, author_text, place_text, date_text
       
     # Prepare the actual positions to plot
+    tailallowance = 15*60 # 15 minute tails
     posdict = {'Bus': {}, 'Rail': {}, 'Ferry': {}, 'Cable Car': {}}
     query = 'SELECT seconds, lat, lon, route_type_desc FROM intervals WHERE seconds >= "%i" AND seconds <= "%i"' % (start-tailallowance, end)
     self.cur.execute(query)
@@ -733,35 +764,43 @@ class Day(Database):
       posdict[mode][second][1].append(lon)
     del answer # Free a large amount of memory
     for mode in ['Bus', 'Rail', 'Ferry', 'Cable Car']:
-      for s in range(start, end):
+      for s in range(start-tailallowance, end):
         try:
-          lon, lat = posdict[mode][s][1], posdict[mode][s][0]
+          lon, lat = make_GCS(posdict[mode][s][1], posdict[mode][s][0], sourceproj)
+          lon, lat = m(lon, lat) # Converts them into (potentially projected) map coordinates
         except KeyError:
           # Mode doesn't operate at s
           lon, lat = [], []
-        posdict[mode][s] = make_GCS(lon, lat, sourceproj)
+        posdict[mode][s] = (lon, lat)
+    # Thin the posdict into every n records, note the seconds
+    posindex = thin(posdict, skip)
     
     # Animation function: called sequentially
     def animate(i):
       # i starts at 0
-      i = i + start + tailallowance
-      skips = 1
-      i = i + (skip * skips)
-      if i >= end:
-        i = end - 1
+      try:
+        sectail = posindex[i] # The current second, considering skips
+      except IndexError:
+        ##sectail = posindex[-1] # Take the final second
+        raise Exception # There should only be as many iterations as things in posindex once it has been thinned
+      secvehicle = sectail + tailallowance
+      #i = i + start + tailallowance
+      if secvehicle >= end:
+        secvehicle = end - 1
+        sectail = secvehicle - tailallowance
         
       # Tails
       def makeTails(past, present, mode):
         # These will be ordered... could do some cool things with this...
-        xs = [[x for x  in posdict[mode][s][0]] for s in range(past, present)] # fifteen minutes before present
-        ys = [[y for y in posdict[mode][s][1]] for s in range(max(0, i-15*60), i-1)]
+        xs = [[x for x in posdict[mode][s][0]] for s in range(past, present)]
+        ys = [[y for y in posdict[mode][s][1]] for s in range(past, present)]
         # ...but not after they have been flattened... here
         xs = [item for sublist in xs for item in sublist]
         ys = [item for sublist in ys for item in sublist]
         return (xs, ys)
       
       # Get the data for the tails
-      fifteenminsago, present = max(0, i-15*60), i-1
+      fifteenminsago, present = max(0, sectail), secvehicle-1
       min15tails_bus = makeTails(fifteenminsago, present, 'Bus')
       min15tails_train = makeTails(fifteenminsago, present, 'Rail')
       min15tails_ferry = makeTails(fifteenminsago, present, 'Cable Car')
@@ -773,31 +812,33 @@ class Day(Database):
       min15headway_cablecar.set_data(min15tails_cablecar[0], min15tails_cablecar[1])
       
       # Current vehicle positions
-      time = str(datetime.timedelta(seconds=i))
+      time = str(datetime.timedelta(seconds=secvehicle))
       time_text.set_text('%s' % time)
-      bus.set_data(posdict['Bus'][i][0], posdict['Bus'][i][1])
-      train.set_data(posdict['Rail'][i][0], posdict['Rail'][i][1])
-      ferry.set_data(posdict['Ferry'][i][0], posdict['Ferry'][i][1])
-      cablecar.set_data(posdict['Cable Car'][i][0], posdict['Cable Car'][i][1])
+      bus.set_data(posdict['Bus'][secvehicle][0], posdict['Bus'][secvehicle][1])
+      train.set_data(posdict['Rail'][secvehicle][0], posdict['Rail'][secvehicle][1])
+      ferry.set_data(posdict['Ferry'][secvehicle][0], posdict['Ferry'][secvehicle][1])
+      cablecar.set_data(posdict['Cable Car'][secvehicle][0], posdict['Cable Car'][secvehicle][1])
       
-      if i < (start + 1800):
+      fadeoutsecs = max(0, int((end-start)/float(skip))*0.25) # 25% of duration
+      if i < fadeoutsecs:
         # Fade out control
-        author_text.set_text('Richard Law | CC BY-NC')
+        author_text.set_text('Richard Law   CC BY-NC 3.0 NZ')
         place_text.set_text(placetext)
-        alpha_author = max(0, 1-(i-start-tailallowance)/600.0)
-        alpha_place = max(0, 1-(i-start-tailallowance)/1800.0)
+        #alpha_author = max(0, 1-i/1250.0)
+        alpha_author = max(0, 1-i/float(fadeoutsecs*0.6))
+        #alpha_place = max(0, 1-i/2500.0)
+        alpha_place = max(0, 1-i/float(fadeoutsecs*0.9))
         alpha_date = alpha_place
         author_text.set_alpha(alpha_author)
         place_text.set_alpha(alpha_place)
       else:
         author_text.set_text('')
         place_text.set_text('')
-      skips += 1
         
       return min15headway_cablecar, min15headway_ferry, min15headway_bus, min15headway_train, bus, train, ferry, cablecar, time_text, author_text, place_text, date_text
       
     # call the animator
-    frames = end-start # How many frames (essentially the duration)
+    frames = (end-start)/skip # How many frames (essentially the duration)
     interval = 0.5 # New frame drawn every <interval> milliseconds. 1 means 1000 frames per second. 3 means 333 frames per second
     blit = True # Only re-draw the bits that have changed
     anim = animation.FuncAnimation(fig, animate, init_func=init, frames=frames, interval=interval, blit=blit)
@@ -808,10 +849,16 @@ class Day(Database):
       # save as an mp4
       #bitrate = None # This could be used to influence file size, too
       writer='ffmpeg_file'
-      fps=576/float(skip)
-      dpi=200
+      fps=int(700/float(skip))
+      dpi=250
       extra_args=['-vcodec', 'libx264']
+      if filepath != '':
+        import os
+        retunpath = os.getcwd()
+        os.chdir(filepath)
       anim.save(filename, writer=writer, fps=fps, dpi=dpi, extra_args=extra_args)
+      if filepath != '':
+        os.chdir(returnpath)
       
 class Mode(Database):
   '''
@@ -2229,7 +2276,7 @@ if __name__ == '__main__':
   
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-  myDay.animateDay(40000, 50000, 174.7, -41.35, .25, "4:3", sourceproj=2134, projected=False, projecton=None, outoption="video", placetext="Wellington Public Transport", skip=5, filename='Testing/test_systemanimate_wgtn43.mp4')
+  myDay.animateDay(0, 10*60*60, 174.7, -41.35, .25, "16:9", sourceproj=2134, projected=True, lon_0=173.0, lat_0=0.0, targetproj='tmerc', outoption="video", placetext="Wellington Public Transport", skip=60, filename='WgtnSundayOrd_Fast4.mp4')
   ################################################################################
   ################################ End ###########################################
   ################################################################################
