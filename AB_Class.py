@@ -144,6 +144,8 @@ from shapely.wkb  import loads # Projecting
 from math import sqrt # Snapping
 from sys import maxint # Snapping
 
+import bisect
+
 import sqlite3 as dbapi
 db_str = "GTFSSQL_Wellington_20140113_192434.db" # Name of database
 ##db_str = "GTFSSQL_Wellington_20131207_212134__SUBSET__.db" # Subset database, for rapid testing
@@ -688,7 +690,7 @@ class Day(Database):
     elif aspectratio == "16:9":
       # 16:9 aspect ratio
       urcrnrlon, urcrnrlat = llcrnrlon+(latheight*(16.0/9.0)), llcrnrlat+latheight
-    elif aspectratip == "equal":
+    elif aspectratio == "equal":
       # Equal aspect ratio
       urcrnrlon, urcrnrlat = llcrnrlon+latheight, llcrnrlat+latheight
     else:
@@ -781,10 +783,8 @@ class Day(Database):
       try:
         sectail = posindex[i] # The current second, considering skips
       except IndexError:
-        ##sectail = posindex[-1] # Take the final second
         raise Exception # There should only be as many iterations as things in posindex once it has been thinned
       secvehicle = sectail + tailallowance
-      #i = i + start + tailallowance
       if secvehicle >= end:
         secvehicle = end - 1
         sectail = secvehicle - tailallowance
@@ -847,16 +847,26 @@ class Day(Database):
       plt.show()
     elif outoption == "video":
       # save as an mp4
-      #bitrate = None # This could be used to influence file size, too
+      bitrate = 7500 # kbits/s: SD=2000--5000, 720pHD=5000--10000, 1080pHD=10000--20000
       writer='ffmpeg_file'
       fps=int(700/float(skip))
+      # Vimeo likes 23.976, 24, 25, 29.97 or 30 FPS
+      fpss = [23.976, 24, 25, 29.97, 30]
+      try:
+        # Take the closest value from fpss
+        fpss = [bisect.bisect(fpss, fps)]
+      except IndexError:
+        # The FPS exceeds Vimeo's min/max
+        fps = max(23.976, fps)
+        fps = min(30, FPS)
+      
       dpi=250
       extra_args=['-vcodec', 'libx264']
       if filepath != '':
         import os
         retunpath = os.getcwd()
         os.chdir(filepath)
-      anim.save(filename, writer=writer, fps=fps, dpi=dpi, extra_args=extra_args)
+      anim.save(filename, writer=writer, fps=fps, dpi=dpi, bitrate=bitrate, extra_args=extra_args)
       if filepath != '':
         os.chdir(returnpath)
       
@@ -2276,7 +2286,7 @@ if __name__ == '__main__':
   
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-  myDay.animateDay(0, 10*60*60, 174.7, -41.35, .25, "16:9", sourceproj=2134, projected=True, lon_0=173.0, lat_0=0.0, targetproj='tmerc', outoption="video", placetext="Wellington Public Transport", skip=60, filename='WgtnSundayOrd_Fast4.mp4')
+  myDay.animateDay(14*60*60, 24*60*60, 174.7, -41.35, .25, "equal", sourceproj=2134, projected=True, lon_0=173.0, lat_0=0.0, targetproj='tmerc', outoption="video", placetext="Wellington Public Transport", skip=60, filename='WgtnSundayOrd_Fast4_equal7500.mp4')
   ################################################################################
   ################################ End ###########################################
   ################################################################################
