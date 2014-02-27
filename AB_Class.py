@@ -14,6 +14,7 @@
 #      > getAllModes()                   ::Returns a list of Mode objects, one for each type of route_type_desc in the GTFS (routes table)::
 #      > getAgencies()                   ::Returns cur.fetchall() of the agency table::
 #      > checkTableEmpty(tableName="intervals") :: Checks if <tableName> (str) has any rows; returns Boolean to that effect::
+#      > populateIntervals(DayObj=None, starti=0, endtime=datetime.time(21, 30)) ::Recursively populates the intervals table of self (Database) for <DayObj>. Be careful to ensure that the DB you're populating does not already have a populated intervals table::
 
 #    Day(Database)                       ::A date. PT runs by daily schedules, considering things like whether it is a weekday, etc::
 #      > __init__(database, datetimeObj) ::<database> is a Database object. <datetimeObj> is a datetime object::
@@ -65,6 +66,7 @@
 #      > getService()                    ::Returns the PTService object that includes this trip::
 #      > getShapelyLine()                ::Returns a Shapely LineString object representing the shape of the trip::
 #      > getShapelyLineProjected(source=4326, target=2134) ::Returns a projected Shapely LineString object, derived from self.getShapelyLine(), where <source> is the unprojected Shapely LineString GCS, and <target> is the target projection for the output. The defaults are WGS84 (<source>) and NZGD2000 (<target>).
+#      > prettyPrintShapelyLine()        ::Prints a columised WKT representation of <self> (trip's) shape, ready tto be copy-pasted into QGIS via a TXT file::
 #      > plotShapelyLine()               ::Uses matplotlib and Shapely to plot the shape of the trip. Does not plot stops (yet?)::
 #      > getStopsInSequence()            ::Returns a list of the stops (as Stop ibjects) that the trip uses, in sequence::
 #      > whereIsVehicle(DayObj, write=False) ::<DayObj> is a Day object. Returns an ordered list of (second, shapely.geometry.Point) for the entire range of the trip in <DayObj>, every second it runs. If write=True, then write the result to the intervals table of the database::
@@ -147,8 +149,12 @@ from sys import maxint # Snapping
 import bisect
 
 import sqlite3 as dbapi
-db_str = "GTFSSQL_Wellington_20140113_192434.db" # Name of database
+# Name of databse
+##db_str = "GTFSSQL_Wellington_20140113_192434.db" # Sunday PT Wellington
+db_str = "GTFSSQL_Wellington_20140227_165759.db" # Monday PT Wellington
+
 ##db_str = "GTFSSQL_Wellington_20131207_212134__SUBSET__.db" # Subset database, for rapid testing
+
 #db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB under Windows, change to necessary filepath
 db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
 myDB = dbapi.connect(db_pathstr) # Connect to DB
@@ -242,6 +248,51 @@ class Database(object):
     '''
     self.cur.execute('SELECT * FROM agency')
     return self.cur.fetchall()
+  
+  def populateIntervals(self, DayObj=None, starti=0, endtime=datetime.time(21, 30))
+    '''
+    Populates the intervals table of self (Database).
+    Be careful not to run this method for a database which already has
+    a populated intervals table.
+    
+    <DayObj>: the day to populate for.
+    <starti>: the trip_id to begin with.
+    <endtime>: the IRL time to stop doing this (so the computer can be turned off)
+    '''
+    myDay = DayObj
+    if myDay == None:
+      raise CustomException("Need to specify a day for the intervals table to be populated.")
+      ## Example: DayObj=Day(self, datetimeObj=datetime.datetime(2013, 12, 8))
+      
+    if self.checkTableEmpty(tableName="intervals") == True:
+      ## If there ARE records in the table
+      raise CustomException("Use a database that has an empty intervals table."
+    
+    dur() # Initiate timer
+    allTrips = myDay.getAllTrips()
+    dur('myDay.getAllTrips()') # How long did it take to get all trip objects for myDay?
+    print len(allTrips), "to process."
+
+    for trip in allTrips: # For all trips on myDay
+      current_time = datetime.datetime.now().time()
+      if trip.trip_id >= starti and current_time < endtime:
+        dur() # Re-initiate timer, once for each trip
+        myDay = Day(self, datetimeObj=datetime.datetime(2013, 12, 8))
+        processing =  "Processing Trip=%i" % trip.trip_id
+        print processing,
+        trip.whereIsVehicle(myDay, write=True) # The actual workhorse
+        process="Trip=%s, i=%i, myPTTrip.whereIsVehicle(myDay, write=True)" % (trip.trip_id, starti,)
+        dur(process) # How long did it take to process the record?
+        starti += 1 # Next index, in parallel with trip_id
+
+    # When done, play some noise to let me know
+    import pygame
+    pygame.init()
+    pygame.mixer.init()
+    sound = pygame.mixer.Sound("test.wav")
+    for i in range(0,5):
+      sound.play()
+      time.sleep(1)
 
 class Day(Database):
   '''
@@ -1687,6 +1738,19 @@ class PTTrip(Route):
     
     ogr_geom.TransformTo(to_srs)
     return loads(ogr_geom.ExportToWkb())
+    
+  def prettyPrintShapelyLine(self):
+    '''
+    Pretty prints Shapely lines in WKT, so that they can be directly
+    copied from the terminal, into a TXT file and put into QGIS.
+    '''
+    import shapely.geometry
+    coords = self.getShapelyLine().coords
+    print "vertex,wktpoint;"
+    for n, c in enumerate(coords):
+      print str(n) + "," + shapely.geometry.Point(c[0], c[1]).wkt + ";"
+    print ""
+    print myTrip.getShapelyLine().wkt
 
   def plotShapelyLine(self):
     '''
@@ -2232,46 +2296,10 @@ if __name__ == '__main__':
   ################################################################################
   ########################## Testing Section #####################################
   ################################################################################
-  
-  # Populating intervals table
-  ## This should be its own function for posterity
-  
+
   '''
-  dur() # Initiate timer
-  
-  myDatabase = Database(myDB)
-  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-
-  allTrips = myDay.getAllTrips()
-  dur('myDay.getAllTrips()') # How long did it take to get all trip objects for myDay?
-  print len(allTrips), "to process."
-
-  endtime = datetime.time(23) # End time for processing
-  i = 7188
-
-  for trip in allTrips: # For all trips on myDay
-    current_time = datetime.datetime.now().time()
-    if trip.trip_id >= i and current_time < endtime: # Control start index, and end processing time -- get some sleep!
-      dur() # Re-initiate timer, once for each trip
-      myDatabase = Database(myDB)
-      myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-      processing =  "Processing Trip=%i" % trip.trip_id
-      print processing,
-      trip.whereIsVehicle(myDay, write=True)
-      process="Trip=%s, i=%i, myPTTrip.whereIsVehicle(myDay, write=True)" % (trip.trip_id, i,)
-      dur(process) # How long did it take to process the record?
-      i += 1 # Next index, in parallel with trip_id
-
-  # When done, play some noise to let me know
-  import pygame
-  pygame.init()
-  pygame.mixer.init()
-  sound = pygame.mixer.Sound("test.wav")
-  for i in range(0,5):
-    sound.play()
-    time.sleep(1)
-  '''
-  '''
+  # Pretty print shapely lines
+  # TODO: Make into a method
   import shapely.geometry
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
@@ -2284,9 +2312,12 @@ if __name__ == '__main__':
   print myTrip.getShapelyLine().wkt
   '''
   
+  '''
+  # Animating
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-  myDay.animateDay(14*60*60, 24*60*60, 174.7, -41.35, .25, "equal", sourceproj=2134, projected=True, lon_0=173.0, lat_0=0.0, targetproj='tmerc', outoption="video", placetext="Wellington Public Transport", skip=60, filename='WgtnSundayOrd_Fast4_equal7500.mp4')
+  myDay.animateDay(0, 24*60*60, 174.7, -41.35, .25, "16:9", sourceproj=2134, projected=True, lon_0=173.0, lat_0=0.0, targetproj='tmerc', outoption="video", placetext="Wellington Public Transport", skip=60, filename='WgtnSundayOrd_169ar_7500kbs2.mp4')
+  '''
   ################################################################################
   ################################ End ###########################################
   ################################################################################
