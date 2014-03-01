@@ -120,21 +120,14 @@ Before using script change filepath for database (db_pathstr) and potentially na
 ################################################################################
 
 import time
-def dur( op=None, clock=[time.time()] ):
-  '''
-  Little timing function to test efficiency.
-  Source: http://code.activestate.com/recipes/578776-a-simple-timing-function/
-  '''
-  if op != None:
-    duration = time.time() - clock[0]
-    print '%s finished. Duration %.6f seconds.' % (op, duration)
-  clock[0] = time.time()
+import os
 
 from string import Template
 import datetime
 
+import matplotlib
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
+import matplotlib.animation as manimation
 import matplotlib
 import numpy as np
 
@@ -152,8 +145,6 @@ import sqlite3 as dbapi
 # Name of databse
 ##db_str = "GTFSSQL_Wellington_20140113_192434.db" # Sunday PT Wellington
 db_str = "GTFSSQL_Wellington_20140227_165759.db" # Monday PT Wellington
-
-##db_str = "GTFSSQL_Wellington_20131207_212134__SUBSET__.db" # Subset database, for rapid testing
 
 #db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB under Windows, change to necessary filepath
 db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
@@ -189,9 +180,11 @@ class Database(object):
     results = self.cur.execute(query)
     for result in results:
       if result[0] == 0:
-        return True
-      else:
+        # There are no records in the database table
         return False
+      else:
+        # There are records in the database table
+        return True
 
   def getFeedInfo(self):
     '''
@@ -249,40 +242,47 @@ class Database(object):
     self.cur.execute('SELECT * FROM agency')
     return self.cur.fetchall()
   
-  def populateIntervals(self, DayObj=None, starti=0, endtime=datetime.time(21, 30))
+  def populateIntervals(self, DB=myDB, DayObj=None, starti=0, endtime=datetime.time(21, 30)):
     '''
     Populates the intervals table of self (Database).
     Be careful not to run this method for a database which already has
-    a populated intervals table.
+    a populated intervals table (an Exception will be raised by this
+    method, so it's not dire).
     
     <DayObj>: the day to populate for.
     <starti>: the trip_id to begin with.
     <endtime>: the IRL time to stop doing this (so the computer can be turned off)
     '''
-    myDay = DayObj
-    if myDay == None:
+    if DayObj == None:
       raise CustomException("Need to specify a day for the intervals table to be populated.")
-      ## Example: DayObj=Day(self, datetimeObj=datetime.datetime(2013, 12, 8))
+      ## Example: DayObj=Day(datetimeObj=datetime.datetime(2013, 12, 8))
       
     if self.checkTableEmpty(tableName="intervals") == True:
       ## If there ARE records in the table
-      raise CustomException("Use a database that has an empty intervals table."
+      raise CustomException("Use a database that has an empty intervals table.")
+      
+    def durat(op=None, clock=[time.time()]):
+      # Little timing function to test efficiency.
+      # Source: http://code.activestate.com/recipes/578776-a-simple-timing-function/
+      if op != None:
+        duration = time.time() - clock[0]
+        print '%s finished. Duration %.6f seconds.' % (op, duration)
+      clock[0] = time.time()
     
-    dur() # Initiate timer
-    allTrips = myDay.getAllTrips()
-    dur('myDay.getAllTrips()') # How long did it take to get all trip objects for myDay?
+    durat() # Initiate timer
+    allTrips = DayObj.getAllTrips()
+    durat('DayObj.getAllTrips()') # How long did it take to get all trip objects for DayObj?
     print len(allTrips), "to process."
 
-    for trip in allTrips: # For all trips on myDay
+    for trip in allTrips: # For all trips on DayObj
       current_time = datetime.datetime.now().time()
       if trip.trip_id >= starti and current_time < endtime:
-        dur() # Re-initiate timer, once for each trip
-        myDay = Day(self, datetimeObj=datetime.datetime(2013, 12, 8))
+        durat() # Re-initiate timer, once for each trip
         processing =  "Processing Trip=%i" % trip.trip_id
         print processing,
-        trip.whereIsVehicle(myDay, write=True) # The actual workhorse
-        process="Trip=%s, i=%i, myPTTrip.whereIsVehicle(myDay, write=True)" % (trip.trip_id, starti,)
-        dur(process) # How long did it take to process the record?
+        trip.whereIsVehicle(DayObj, write=True) # The actual workhorse
+        process="Trip=%s, i=%i, myPTTrip.whereIsVehicle(DayObj, write=True)" % (trip.trip_id, starti,)
+        durat(process) # How long did it take to process the record?
         starti += 1 # Next index, in parallel with trip_id
 
     # When done, play some noise to let me know
@@ -678,7 +678,7 @@ class Day(Database):
     <llcrnrlon> = lower-left corner longitude, e.g. 174.7
     <llcrnrlat> = lower-left cotner latitude, e.g. -41.4
     <latheight> = height of the frame in latitude, e.g. 0.5
-    <aspectratio> = "equal", "4:3", "16:9"
+    <aspectratio> = "equal", "4:3", "16:9", "2:1"
     NOTE: Frame coordinates should be given in WGS84 (not constrained
     to this, but would need changing).
     
@@ -729,35 +729,45 @@ class Day(Database):
       return posindex
         
     import mpl_toolkits.basemap.pyproj as pyproj
-    from matplotlib import pyplot as plt
     from mpl_toolkits.basemap import Basemap
+    
+    if matplotlib.__version__ != '1.3.1':
+      print "This method is only guaranteed to work with MPL v1.3.1."
+      print "You are running v" + v + "."
     
     # Set up frame of animation
     fig = plt.figure(frameon=False, tight_layout=True)
-    fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=None, hspace=None)
+    fig.subplots_adjust(top=1, bottom=-0.2, left=-0.3, right=1.3, wspace=None, hspace=None)
+    
     if aspectratio == "4:3":
        # 4:3 aspect ratio
       urcrnrlon, urcrnrlat = llcrnrlon+(latheight*(4.0/3.0)), llcrnrlat+latheight
     elif aspectratio == "16:9":
       # 16:9 aspect ratio
       urcrnrlon, urcrnrlat = llcrnrlon+(latheight*(16.0/9.0)), llcrnrlat+latheight
+    elif aspectratio == "2:1":
+      # 2:1 aspect ratio, which seems to be the Vimeo assumption
+      urcrnrlon, urcrnrlat = llcrnrlon+(latheight*2.0), llcrnrlat+latheight
     elif aspectratio == "equal":
       # Equal aspect ratio
       urcrnrlon, urcrnrlat = llcrnrlon+latheight, llcrnrlat+latheight
     else:
-      raise CustomException("aspectratio must be one of '4:3', '16:9', 'equal'")
+      raise CustomException("aspectratio must be one of '4:3', '16:9', '2:1', 'equal'")
     
-    ax = plt.axes(xlim=(llcrnrlon,urcrnrlon), ylim=(llcrnrlat,urcrnrlat), frame_on=True, rasterized=False)
+    ax = plt.axes(xlim=(llcrnrlon,urcrnrlon), ylim=(llcrnrlat,urcrnrlat), frame_on=False, rasterized=False) #frame_on ## TODO: decide on this
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
-    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(-float('Inf'), float('Inf')) 
+    ax.set_ylim(-float('Inf'), float('Inf')+1) 
+    ax.set_xticks([])
+    ax.set_yticks([])
     textcolor = '#FFF5EE' # Eggshell white
     place_text  = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=11, family='sans-serif', color=textcolor)
     time_text = ax.text(0.87, 0.03, '', transform=ax.transAxes, fontsize=11, family='monospace', weight='heavy', color=textcolor)
     day_text = ax.text(0.87, 0.07, '', transform=ax.transAxes, fontsize=11, family='sans-serif', color=textcolor)
     date_text = ax.text(0.87, 0.11, '', transform=ax.transAxes, fontsize=9, family='monospace', color=textcolor)
     author_text = ax.text(0.02, 0.03, '', transform=ax.transAxes, fontsize=9, family='sans-serif', color=textcolor)
-    tailsize=0.75
+    tailsize=0.6
     bus, = ax.plot([], [], 'o', ms=3, c='#d95f02', alpha=1, zorder=3) # Bus colour, BA5F22
     min15headway_bus, = ax.plot([], [], '.', ms=tailsize, c='#fc8d62', alpha=1, zorder=2) # Bus tails, =<15 minute frequency
     train, = ax.plot([], [], 'o', ms=4, c='#1b9e77', alpha=1, zorder=3) # Train colour, 000000, e7298a
@@ -766,7 +776,7 @@ class Day(Database):
     min15headway_ferry, = ax.plot([], [], '.', ms=tailsize, c='#8da0cb', alpha=1, zorder=2) # Ferry tails, =<15 minute frequency
     cablecar, = ax.plot([], [], 'o', ms=2, c='#e7298a', alpha=1, zorder=3) # Cable Car colour, FF0000, 1b9e77
     min15headway_cablecar, = ax.plot([], [], '.', ms=tailsize, c='#e78ac3', alpha=1, zorder=2) # Cable car tails, =<15 minute frequency, 66c2a5
-    # NOTE: add more modes when there are more GTFS feeds (that have additional modes)
+    # TODO: add more modes when there are more GTFS feeds (that have additional modes)
     
     # Establish basemap object; super-background
     if projected == True:
@@ -828,8 +838,8 @@ class Day(Database):
     # Thin the posdict into every n records, note the seconds
     posindex = thin(posdict, skip)
     
-    # Animation function: called sequentially
     def animate(i):
+      # Animation function: called sequentially
       # i starts at 0
       try:
         sectail = posindex[i] # The current second, considering skips
@@ -875,9 +885,7 @@ class Day(Database):
         # Fade out control
         author_text.set_text('Richard Law   CC BY-NC 3.0 NZ')
         place_text.set_text(placetext)
-        #alpha_author = max(0, 1-i/1250.0)
         alpha_author = max(0, 1-i/float(fadeoutsecs*0.6))
-        #alpha_place = max(0, 1-i/2500.0)
         alpha_place = max(0, 1-i/float(fadeoutsecs*0.9))
         alpha_date = alpha_place
         author_text.set_alpha(alpha_author)
@@ -885,42 +893,59 @@ class Day(Database):
       else:
         author_text.set_text('')
         place_text.set_text('')
-        
-      return min15headway_cablecar, min15headway_ferry, min15headway_bus, min15headway_train, bus, train, ferry, cablecar, time_text, author_text, place_text, date_text
       
+      name = str(i) +".png"
+      numzeros = 9 - len(name)
+      name = numzeros*"0" + name
+      fig.savefig(name, bbox_inches='tight', pad_inches=0) # Saves each i to a PNG
+      return min15headway_cablecar, min15headway_ferry, min15headway_bus, min15headway_train, bus, train, ferry, cablecar, time_text, author_text, place_text, date_text
+    
     # call the animator
     frames = (end-start)/skip # How many frames (essentially the duration)
     interval = 0.5 # New frame drawn every <interval> milliseconds. 1 means 1000 frames per second. 3 means 333 frames per second
-    blit = True # Only re-draw the bits that have changed
-    anim = animation.FuncAnimation(fig, animate, init_func=init, frames=frames, interval=interval, blit=blit)
+    blit = True # Only re-draw the bits that have changed; if True, func and init_fucn should return an iterable of drawables to clear
+    anim = manimation.FuncAnimation(fig, animate, init_func=init, frames=frames, interval=interval, blit=blit)
 
     if outoption == "show":
       plt.show()
     elif outoption == "video":
-      # save as an mp4
-      bitrate = 7500 # kbits/s: SD=2000--5000, 720pHD=5000--10000, 1080pHD=10000--20000
-      writer='ffmpeg_file'
-      fps=int(700/float(skip))
-      # Vimeo likes 23.976, 24, 25, 29.97 or 30 FPS
-      fpss = [23.976, 24, 25, 29.97, 30]
-      try:
-        # Take the closest value from fpss
-        fpss = [bisect.bisect(fpss, fps)]
-      except IndexError:
-        # The FPS exceeds Vimeo's min/max
-        fps = max(23.976, fps)
-        fps = min(30, FPS)
-      
-      dpi=250
-      extra_args=['-vcodec', 'libx264']
-      if filepath != '':
-        import os
-        retunpath = os.getcwd()
-        os.chdir(filepath)
-      anim.save(filename, writer=writer, fps=fps, dpi=dpi, bitrate=bitrate, extra_args=extra_args)
-      if filepath != '':
-        os.chdir(returnpath)
-      
+      from sys import platform as _platform
+      if _platform in ["win32", "darwin", "cygwin"]:
+        raise CustomException("The method Day.animateDay() is only supported on Linux operating systems.")
+      elif _platform == "linux" or _platform == "linux2":
+        # save as an mp4
+        bitrate = 15000 # kbits/s: SD=2000--5000, 720pHD=5000--10000, 1080pHD=10000--20000
+        writer='ffmpeg'
+        codec = '-c:v libx264'
+        fps=int(700/float(skip))
+        # Vimeo likes 23.976, 24, 25, 29.97 or 30 FPS
+        fpss = [23.976, 24, 25, 29.97, 30]
+        try:
+          # Take the closest value from fpss
+          fpss = [bisect.bisect(fpss, fps)]
+          fps = fpss
+          fps = max(23.976, fps)
+          fps = min(30, fps)
+        except IndexError:
+          # The FPS exceeds Vimeo's min/max
+          fps = max(23.976, fps)
+          fps = min(30, fps)
+        
+        fps = 15
+        if filepath != '':
+          retunpath = os.getcwd()
+          os.chdir(filepath)
+        anim.save("temp_" + filename)
+        writevideo =  writer + " -r " + str(fps) + " -i %05d.png " + codec + " -qp 0 -b:v " + str(bitrate) + "k -minrate 15000k -maxrate 15000k -bufsize 1835k " + filename
+        print "Script is running: " + writevideo
+        os.system(writevideo) # Create the video file
+        cleanup = "rm *.png; rm " + "temp_" + filename
+        print "Script is running: " + cleanup 
+        os.system(cleanup)
+        if filepath != '':
+          os.chdir(returnpath)
+        print ">>>>>>> METHOD Day.animateDay() IS COMPLETE <<<<<<<"
+        
 class Mode(Database):
   '''
   A class of vehicle that has particular properties it does not share with other vehicles.
@@ -1288,7 +1313,7 @@ class PTTrip(Route):
     else:
       return None
     
-  def getTripStartDay(self, DayObj):
+  def getTripStartDay(self, DayObj, verbose=False):
     '''
     Trips that run over midnight strictly operate on two days of the
     week. However, exceptions are recorded as calendar dates that refer
@@ -1309,6 +1334,8 @@ class PTTrip(Route):
     '''
     q = Template('SELECT DISTINCT $DOW FROM stop_times_amended WHERE trip_id = "$trip_id"')
     query = q.substitute(DOW = DayObj.dayOfWeekStr, trip_id = self.trip_id)
+    if verbose:
+      print query
     self.cur.execute(query)
     nottoday, today = False, False
     for indication in self.cur.fetchall():
@@ -1323,11 +1350,15 @@ class PTTrip(Route):
       # Now need to find whether  it starts "today" (i.e. it ends
       # "tomorrow") or "yesterday" (i.e. it ends "today")
       # This can be ambiguous.
+      if verbose:
+        print "Trip runs through a midnight."
       yesterday = Day(self.database, DayObj.yesterdayObj)
       today = DayObj.dayOfWeekStr
       tomorrow = Day(self.database, DayObj.tomorrowObj)
       q = Template('SELECT $yesterday, $today, $tomorrow FROM stop_times_amended WHERE trip_id = "$trip_id" ORDER BY stop_sequence ASC')
       query = q.substitute(yesterday = yesterday.dayOfWeekStr, today = today, tomorrow = tomorrow.dayOfWeekStr, trip_id = self.trip_id)
+      if verbose:
+        print query
       self.cur.execute(query)
       beginning = self.cur.fetchall()[0] # The pattern for whether the last stop of the trip occurs yesterday, today and tomorrow (0 or 1 for each)
       
@@ -1459,7 +1490,7 @@ class PTTrip(Route):
       return DayObj
     elif nottoday == True and today == False:
     # Trip does not even run on this day of the week
-      return
+      return None
       
   def getTripDuration(self, DayObj):
     '''
@@ -1605,6 +1636,8 @@ class PTTrip(Route):
       print Week
   
     DOW = DayObj.dayOfWeekStr.title()
+    if verbose:
+      print "The method is considering a " + DOW
     tripdate = self.getTripStartDay(DayObj)
     if tripdate == None:
       return False
@@ -1643,6 +1676,8 @@ class PTTrip(Route):
       # there may still be exceptions in the form of ADDITIONS
       q = Template('SELECT * FROM calendar_dates WHERE service_id = "$service_id" and date = "$date"')
       query = q.substitute(service_id = serviceid, date = tripdate)
+      if verbose:
+        print query
       self.cur.execute(query)
       exceptions = self.cur.fetchall()
       for exception in exceptions:
@@ -1932,8 +1967,10 @@ class PTTrip(Route):
     ## Get all the stops that the trip visits
     q = Template('SELECT ST.*, S.stop_lat, S.stop_lon FROM stop_times AS ST JOIN stops AS S ON S.stop_id = ST.stop_id WHERE trip_id = $trip_id ORDER BY stop_sequence')
     query = q.substitute(trip_id = self.trip_id)
+    print "\n\n\n", query
     self.cur.execute(query)
     Stop_Times = self.cur.fetchall()
+    print Stop_Times
     line = self.getShapelyLineProjected()
     nominallength = Stop_Times[-1][10] * factor
     scalefactor = scale_factor(line, nominallength)
@@ -1942,9 +1979,10 @@ class PTTrip(Route):
     
     # Stop arrival/departures
     stoparrivedepart, seencount, stopdistalongs, stopobjs = {}, {}, [], []
-    successat = None # For fewer SQL statements and th edge-case where
+    successat = None # For fewer SQL statements and the edge-case where
                      # the route doubles-back on itself.
     for n, stop in enumerate(Stop_Times):
+      print n, stop
       stopobj = Stop(self.database, stop[3])
       stopobjs.append(stopobj)
       try:
@@ -1953,7 +1991,9 @@ class PTTrip(Route):
       except KeyError:
         seen = 0
         seencount[stopobj.stop_id] = 1
-      stoparrivedepart[n] = stopobj.getStopTime(self, DayObj)[seen]
+      gotstoptime = stopobj.getStopTime(self, DayObj)
+      print gotstoptime
+      stoparrivedepart[n] = gotstoptime[seen]
       stopdistalongsuccess = False
       step = 1
       while stopdistalongsuccess == False:
@@ -2133,8 +2173,10 @@ class Stop(Database):
     '''
     Returns a list of (arrival, departure) time tuples.
     The elements of the tuple are datetime.datetime objects.
-    They are in the same order as the stops visited along the trip.
+    They are in the same order as the stops visited along <TripObj>'s
+    route on <DayObj>.
     '''
+    print "GETSTOPTIME IS BEING EXECUTED"
     def prepare_tuple(fetchall, DayObj):
       retlist = []
       for stop in fetchall:
@@ -2143,6 +2185,7 @@ class Stop(Database):
         arrival_hour, arrival_min, arrival_sec, arrival_ssec = arrival_time[0:2], arrival_time[3:5], arrival_time[6:8], arrival_time[9:]
         departure_hour, departure_min, departure_sec, departure_ssec = departure_time[0:2], departure_time[3:5], departure_time[6:8], departure_time[9:]
         startday = TripObj.getTripStartDay(DayObj)
+        print "startday...", startday
         if isinstance(startday, Day):
           if int(arrival_hour) < 24:
             # Then it is not post-midnight
@@ -2164,19 +2207,28 @@ class Stop(Database):
               nextday = DayObj.tomorrowObj
             stop_departure_datetime = nextday.combine(nextday, datetime.time(int(departure_hour), int(departure_min), int(departure_sec), int(departure_ssec)))
           retlist.append((stop_arrival_datetime, stop_departure_datetime))
+      print "retlist...", retlist
       return retlist
       
     # 1. Check if trip runs on DayObj
-    if TripObj.doesTripRunOn(DayObj):
+    #if TripObj.doesTripRunOn(DayObj, verbose=True) == True:
+    #if TripObj.runstoday == True:
+    print DayObj.dayOfWeekStr.title()
+    if TripObj.doesTripRunOn(DayObj) == True:
       # 2. Get the raw arrival and departure times
       q = Template('SELECT arrival_time, departure_time FROM stop_times WHERE stop_id = "$stop_id" and trip_id = "$trip_id" ORDER BY stop_sequence ASC')
       query = q.substitute(stop_id = self.stop_id, trip_id = TripObj.trip_id)
+      print query
       self.cur.execute(query)
       stops = self.cur.fetchall()
+      print "getStopTime.... ", stops
       # Returns a list, because in some cases there are trips that
       # visit the same stop twice (or potentially more) in one trip:
       # loop routes.
       return prepare_tuple(stops, DayObj)
+    else:
+      print "TripObj does not run on DayObj."
+      return None
 
   def getStopSnappedToRoute(self, TripObj, projected=True, new=True):
     '''
@@ -2296,27 +2348,24 @@ if __name__ == '__main__':
   ################################################################################
   ########################## Testing Section #####################################
   ################################################################################
-
   '''
-  # Pretty print shapely lines
-  # TODO: Make into a method
-  import shapely.geometry
+  # Testing
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-  myTrip = PTTrip(myDB, 7188)
-  coords = myTrip.getShapelyLine().coords
-  print "vertex,wktpoint;"
-  for n, c in enumerate(coords):
-    print str(n) + "," + shapely.geometry.Point(c[0], c[1]).wkt + ";"
-  print ""
-  print myTrip.getShapelyLine().wkt
+  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 6))
+  myTrip = PTTrip(myDB, 1)
+  print myTrip.doesTripRunOn(myDay)
+  print myTrip.doesRouteRunOn(myDay)
   '''
+  
+  # Populating intervals table
+  myDatabase = Database(myDB)
+  myDatabase.populateIntervals(DayObj=Day(myDB, datetimeObj=datetime.datetime(2013, 12, 9)), DB=myDB, starti=0, endtime=datetime.time(00, 40))
   
   '''
   # Animating
   myDatabase = Database(myDB)
   myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-  myDay.animateDay(0, 24*60*60, 174.7, -41.35, .25, "16:9", sourceproj=2134, projected=True, lon_0=173.0, lat_0=0.0, targetproj='tmerc', outoption="video", placetext="Wellington Public Transport", skip=60, filename='WgtnSundayOrd_169ar_7500kbs2.mp4')
+  myDay.animateDay(23*60*60, 24*60*60, 174.7, -41.35, .25, "2:1", sourceproj=2134, projected=True, lon_0=173.0, lat_0=0.0, targetproj='tmerc', outoption="video", placetext="Wellington Public Transport", skip=30, filename='outputtest2.mp4')
   '''
   ################################################################################
   ################################ End ###########################################
