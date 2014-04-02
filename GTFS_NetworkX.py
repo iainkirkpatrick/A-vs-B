@@ -1,2 +1,4 @@
 import networkx as nx
-import AB_Class as AB
+from AB_Class import *
+
+print "Import success"

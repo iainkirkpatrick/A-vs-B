@@ -28,6 +28,7 @@
 #      > bokehFrequencyByMode(n, Show=False, name="frequency.py", title="frequency.py", graphTitle="Wellington Public Transport Services, ")  ::Returns an HTML graph of the number of active service every <n> seconds, on the second, broken down by mode::
 #      > getSittingStops(second)         ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>. Correctly handles post-midnight services::
 #      > getAllTrips()                   ::Returns a list of PTTrip objects representing those trips that run at least once on self (Day). Accounts for midnight bug correctly::
+#      > hexbinStops()                   ::Creates a hexbin plot representing the number of stops vehicles make in Day::
 
 #    Mode(Database)                      ::A vehicle class, like "Bus", "Rail", "Ferry" and "Cable Car"::
 #      > __init__(database, modetype)    ::<database> is a Database object. <modetype> is a string (as above) of the mode of interest::
@@ -127,11 +128,7 @@ import datetime
 
 import matplotlib
 import matplotlib.pyplot as plt
-import matplotlib.animation as manimation
-import matplotlib
 import numpy as np
-
-import bokeh.plotting
 
 from shapely.geometry import Point, LineString
 from osgeo import ogr # Projecting
@@ -144,10 +141,12 @@ import bisect
 import sqlite3 as dbapi
 # Name of databse
 ##db_str = "GTFSSQL_Wellington_20140113_192434.db" # Sunday PT Wellington
-db_str = "GTFSSQL_Wellington_20140227_165759.db" # Monday PT Wellington
+##db_str = "GTFSSQL_Wellington_20140227_165759.db" # Monday PT Wellington
+db_str = "Saturday/GTFSSQL_Wellington_20140402_210506.db" # Saturday PT Wellington
 
 #db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB under Windows, change to necessary filepath
-db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
+##db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
+db_pathstr = "/media/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str
 myDB = dbapi.connect(db_pathstr) # Connect to DB
 myDB.text_factory = dbapi.OptimizedUnicode
 
@@ -259,7 +258,7 @@ class Database(object):
       
     if self.checkTableEmpty(tableName="intervals") == True:
       ## If there ARE records in the table
-      raise CustomException("Use a database that has an empty intervals table.")
+      print "Note, the intervals table is not blank."
       
     def durat(op=None, clock=[time.time()]):
       # Little timing function to test efficiency.
@@ -580,6 +579,7 @@ class Day(Database):
     <name> is a string that can be used to name the HTML file.
     If <show> is true, opens the result in a browser automatically.
     '''
+    import bokeh.plotting
 
     def incrementT(mode, count):
       '''Adds to t'''
@@ -662,7 +662,90 @@ class Day(Database):
     if Show == True:
       bokeh.plotting.show()
     return None
+  
+  def nvd3FrequencyByMode(self, n, name="frequency_nvd3.html", verbose=True):
+    '''
+    Plots frequency of the various PT modes in the city at in intervals of n seconds.
+    That is, the numbers of vehicles at operation at any given n, from 0000 to 2359.
+    '''
+    def appendmodecount(modecount, modetypestr, modetypelist):
+      try:
+        modetypelist.append(modecount[modetypestr])
+      except KeyError:
+        modetypelist.append(0)
+      return modetypelist
+    
+    def getData(xdata):
+      '''
+      select route_type_desc, seconds, count(route_type_desc)
+      from intervals
+      where seconds = 25000 or seconds = 30000 or seconds = 35000 or seconds = 40000
+      group by route_type_desc, seconds
+      
+      Example output: {'Cable Car': {0: 0, 28800: 2, 57600: 2, 3600: 0, 82800: 0, 46800: 2, 7200: 0, 39600: 2, 64800: 2, 10800: 0, 54000: 2, 14400: 0, 36000: 2, 43200: 2, 18000: 0, 72000: 2, 32400: 2, 61200: 2, 21600: 0, 75600: 2, 50400: 2, 25200: 2, 79200: 0, 86399: 0, 68400: 2}, 'Bus': {0: 0, 28800: 269, 57600: 194, 3600: 0, 82800: 30, 46800: 129, 7200: 0, 39600: 126, 64800: 223, 10800: 0, 54000: 145, 14400: 0, 36000: 136, 43200: 124, 18000: 0, 72000: 65, 32400: 178, 61200: 240, 21600: 25, 75600: 47, 50400: 126, 25200: 145, 79200: 37, 86399: 11, 68400: 112}, 'Rail': {0: 0, 28800: 21, 57600: 20, 3600: 0, 82800: 4, 46800: 11, 7200: 0, 39600: 11, 64800: 22, 10800: 0, 54000: 10, 14400: 0, 36000: 12, 43200: 10, 18000: 2, 72000: 10, 32400: 13, 61200: 21, 21600: 10, 75600: 7, 50400: 11, 25200: 22, 79200: 4, 86399: 2, 68400: 13}, 'Ferry': {0: 0, 28800: 2, 57600: 1, 3600: 0, 82800: 0, 46800: 1, 7200: 0, 39600: 1, 64800: 2, 10800: 0, 54000: 0, 14400: 0, 36000: 1, 43200: 1, 18000: 0, 72000: 0, 32400: 2, 61200: 2, 21600: 0, 75600: 0, 50400: 0, 25200: 2, 79200: 0, 86399: 0, 68400: 2}}
 
+      '''
+      query = 'SELECT route_type_desc, seconds, count(route_type_desc) FROM intervals WHERE seconds = '
+      for second in xdata:
+        query += str(second) + ' or seconds = '
+      query = query[:-13] # Strip off the 'or seconds = ' of the last entry
+      query += 'GROUP BY route_type_desc, seconds'
+      self.cur.execute(query)
+      retdata = self.cur.fetchall()
+      
+      # Grab modes
+      modes = []
+      for line in retdata:
+        mode = line[0]
+        if mode not in modes: modes.append(mode)
+      
+      # Establish dictionary, 0 count is default
+      modecountsmoments = {}
+      for mode in modes:
+        modecountsmoments[mode] = {}
+        for second in xdata:
+          modecountsmoments[mode][second] = 0
+      
+      # Populate dictionary with real values
+      for line in retdata:
+        mode, moment, count = line[0], line[1], line[2]
+        modecountsmoments[mode][moment] = count
+      
+      return modes, modecountsmoments
+    
+    import calendar
+    def converttimetoUnix(day, secondstoadd):
+      daytime = day + datetime.timedelta(0,secondstoadd)
+      return calendar.timegm(daytime.utctimetuple()) * 1000 # Milliseconds 1000000
+    
+    eod = 24*60*60-1
+    xdata = [n for n in range(0,eod,n)]
+    if eod not in xdata: xdata.append(eod)
+    modes, fullYdata = getData(xdata)
+    
+    # Convert xdata to Unix timestamp
+    # https://github.com/mbostock/d3/wiki/Time-Formatting
+    daytimeobj = self.datetimeObj
+    convertedxdata = [converttimetoUnix(daytimeobj, x) for x in xdata]
+    convertedxdata.sort()
+
+    # Initialise chart type
+    from nvd3 import lineWithFocusChart
+    chart = lineWithFocusChart(name='lineWithFocusChart', x_is_date=True, x_axis_format="%c") # %X is time as "%H:%M:%S"
+    extra_serie = {"tooltip": {"y_start": "", "y_end": " vehicles"}, "date_format": "%c"}
+    # Build mode specific data list, sorted
+    for mode in modes:
+      datalist = [fullYdata[mode][second] for second in xdata]
+      if verbose: print mode, datalist, convertedxdata
+      chart.add_serie(name=mode, y=datalist, x=convertedxdata, extra=extra_serie)
+    # Build HTML and JS
+    output_file = open('frequency_nvd3.html', 'w')
+    chart.buildhtmlheader()
+    #chart.create_y_axis(name="yAxis",label="Vehicles")
+    chart.buildhtml()
+    output_file.write(chart.htmlcontent)
+    output_file.close()
+    
   def animateDay(self, start, end, llcrnrlon, llcrnrlat, latheight, aspectratio, sourceproj=None, projected=False, targetproj=None, lat_0=None, lon_0=None, outoption="show", placetext='', skip=5, filepath='', filename='TestOut.mp4'):
     '''
     Animates the public transport system for self day.
@@ -701,6 +784,8 @@ class Day(Database):
     filename of the output.
     <flilpath> gives the directory it is to be stored in.
     '''
+    import matplotlib.animation as manimation
+    
     def make_GCS(lonlist,latlist,fromsourceproj):
       '''
       Rather than writing the intervals table in lat/lon values,
@@ -945,6 +1030,141 @@ class Day(Database):
         if filepath != '':
           os.chdir(returnpath)
         print ">>>>>>> METHOD Day.animateDay() IS COMPLETE <<<<<<<"
+        
+  def hexbinStopVisits(self, projected=False, sourceproj=4326, targetproj=2134):
+    '''
+    hexbin is an axes method or pyplot function that is essentially
+    a pcolor of a 2-D histogram with hexagonal cells.  It can be
+    much more informative than a scatter plot; in the first subplot
+    below, try substituting 'scatter' for 'hexbin'.
+    
+    See Stop.getShapelyPointProjected for information about sourceproj and targetproj,
+    although this implementation is separate.
+    '''
+    
+    import mpl_toolkits.basemap.pyproj as pyproj
+    from mpl_toolkits.basemap import Basemap
+    
+    # There is an issue with the Wellington GTFS that means that the XY
+    # locations recorded to not match well with the coastlines of Basemap.
+    # I'm not sure if this holds for other GTFS.
+    # For now, I apply a cosmetic adjustment to lats and lons from the
+    # GTFS.
+    cosmeticxadj = 0.0005 # Drags locations right
+    cosmeticyadj = -0.002 # Drags locations down
+    
+    # Get all the trip ids for trips that run on self (Day)
+    validtripids = [trip.trip_id for trip in self.getAllTrips()]
+    #validtripids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 5000, 5001, 5002, 5003, 5004, 6700, 6701, 6702, 4908, 2345, 1000, 1001, 1002, 2000, 2001, 2002, 3000, 3001, 4000, 4001, 4002, 4003, 4004, 4005, 4006, 4007, 4008, 4009, 4010, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010]
+    #validtripids = [i for i in range(1,10000)]
+    q = "SELECT trip_id, stop_id FROM stop_times ORDER BY trip_id ASC"
+    self.cur.execute(q)
+    # Count the number of trips that stop at each stop.
+    stopvisits = {}
+    for stopthing in self.cur.fetchall():
+      trip_id, stop_id = stopthing[0], stopthing[1]
+      if trip_id in validtripids:
+        try:
+          stopvisits[stop_id] = stopvisits[stop_id] + 1
+        except KeyError:
+          stopvisits[stop_id] = 1
+    
+    aspectratio='equal'
+    llcrnrlon = 174.7+cosmeticyadj
+    llcrnrlat = -41.4+cosmeticxadj
+    latheight=0.5
+    if aspectratio == "4:3":
+       # 4:3 aspect ratio
+      urcrnrlon, urcrnrlat = llcrnrlon+(latheight*(4.0/3.0)), llcrnrlat+latheight
+    elif aspectratio == "16:9":
+      # 16:9 aspect ratio
+      urcrnrlon, urcrnrlat = llcrnrlon+(latheight*(16.0/9.0)), llcrnrlat+latheight
+    elif aspectratio == "2:1":
+      # 2:1 aspect ratio, which seems to be the Vimeo assumption
+      urcrnrlon, urcrnrlat = llcrnrlon+(latheight*2.0), llcrnrlat+latheight
+    elif aspectratio == "equal":
+      # Equal aspect ratio
+      urcrnrlon, urcrnrlat = llcrnrlon+latheight, llcrnrlat+latheight
+    else:
+      raise CustomException("aspectratio must be one of '4:3', '16:9', '2:1', 'equal'")
+      
+    xmin = llcrnrlon #x.min()
+    xmax = urcrnrlon #x.max()
+    ymin = llcrnrlat #y.min()
+    ymax = urcrnrlat #y.max()
+    if projected:
+      to_srs = ogr.osr.SpatialReference()
+      to_srs.ImportFromEPSG(targetproj)
+      from_srs = ogr.osr.SpatialReference()
+      from_srs.ImportFromEPSG(sourceproj)
+      mins = ogr.CreateGeometryFromWkb(Point(xmin, ymin).wkb)
+      mins.AssignSpatialReference(from_srs)
+      mins.TransformTo(to_srs)
+      maxs = ogr.CreateGeometryFromWkb(Point(xmax, ymax).wkb)
+      maxs.AssignSpatialReference(from_srs)
+      maxs.TransformTo(to_srs)
+      xmin = loads(mins.ExportToWkb()).x
+      ymin = loads(mins.ExportToWkb()).y
+      xmax = loads(maxs.ExportToWkb()).x
+      ymax = loads(maxs.ExportToWkb()).y
+      
+    xs, ys, counts = [], [], []
+    for stop in stopvisits:
+      count = stopvisits[stop]
+      stopobj = Stop(self.database, stop)
+      if projected == False:
+        xy = stopobj.getShapelyPoint()
+      else:
+        xy = stopobj.getShapelyPointProjected()
+      x, y = xy.x+cosmeticxadj, xy.y+cosmeticyadj
+      if x < xmax and x > xmin and y < ymax and y > ymin:
+        for c in range(count):
+          xs.append(x)
+          ys.append(y)
+      else:
+        pass
+    xs = np.array(xs)
+    ys = np.array(ys)
+    
+    for i in range(1,4+1):
+      place = int('22' + str(i))
+      plt.subplot(place, aspect='equal')
+      ax = plt.axes(xlim=(llcrnrlon,urcrnrlon), ylim=(llcrnrlat,urcrnrlat), frame_on=False, rasterized=False)
+      ax.get_xaxis().set_visible(False)
+      ax.get_yaxis().set_visible(False)
+      ax.set_xlim(-float('Inf'), float('Inf')) 
+      ax.set_ylim(-float('Inf'), float('Inf')+1) 
+      ax.set_xticks([])
+      ax.set_yticks([])
+      m = Basemap(llcrnrlon=llcrnrlon, llcrnrlat=llcrnrlat, urcrnrlon=urcrnrlon, urcrnrlat=urcrnrlat, resolution='f', projection='cyl', lon_0=173.0, lat_0=0.0, area_thresh = 0)
+      m.drawcoastlines(linewidth=.2)
+      landcolour = '#474747'
+      oceancolour = '#666666'
+      lakecolour = oceancolour
+      m.fillcontinents(color=landcolour,lake_color=lakecolour,zorder=0)
+      m.drawmapboundary(fill_color=oceancolour)
+      import brewer2mpl
+      from matplotlib.ticker import LogFormatter
+      class LogFormatterHB(LogFormatter): 
+        def __call__(self, v, pos=None): 
+            vv = self._base ** v 
+            return LogFormatter.__call__(self, vv, pos)
+      hbin = plt.hexbin(xs, ys, mincnt=1, gridsize=100, bins='log', cmap=brewer2mpl.get_map('BuPu', 'sequential', 3+i).mpl_colormap)
+      plt.axis([xmin, xmax, ymin, ymax])
+      plt.title(self.dayOfWeekStr.title(), fontsize=16)
+    
+    plt.suptitle("PT Vehicle Stops", fontsize=20)
+    cb = plt.colorbar(format=LogFormatterHB())
+    cb.set_label('Count of vehicle stops (logarithmic)')
+    '''
+    plt.subplot(122, aspect='equal')
+    plt.hexbin(x,y,gridsize=50,bins='log', cmap=plt.cm.YlOrRd_r)
+    plt.axis([xmin, xmax, ymin, ymax])
+    plt.title("With a log color scale")
+    cb = plt.colorbar()
+    cb.set_label('log10(N)')
+    '''
+    plt.show()
         
 class Mode(Database):
   '''
@@ -1967,10 +2187,8 @@ class PTTrip(Route):
     ## Get all the stops that the trip visits
     q = Template('SELECT ST.*, S.stop_lat, S.stop_lon FROM stop_times AS ST JOIN stops AS S ON S.stop_id = ST.stop_id WHERE trip_id = $trip_id ORDER BY stop_sequence')
     query = q.substitute(trip_id = self.trip_id)
-    print "\n\n\n", query
     self.cur.execute(query)
     Stop_Times = self.cur.fetchall()
-    print Stop_Times
     line = self.getShapelyLineProjected()
     nominallength = Stop_Times[-1][10] * factor
     scalefactor = scale_factor(line, nominallength)
@@ -1982,7 +2200,6 @@ class PTTrip(Route):
     successat = None # For fewer SQL statements and the edge-case where
                      # the route doubles-back on itself.
     for n, stop in enumerate(Stop_Times):
-      print n, stop
       stopobj = Stop(self.database, stop[3])
       stopobjs.append(stopobj)
       try:
@@ -1991,9 +2208,7 @@ class PTTrip(Route):
       except KeyError:
         seen = 0
         seencount[stopobj.stop_id] = 1
-      gotstoptime = stopobj.getStopTime(self, DayObj)
-      print gotstoptime
-      stoparrivedepart[n] = gotstoptime[seen]
+      stoparrivedepart[n] = stopobj.getStopTime(self, DayObj)[seen]
       stopdistalongsuccess = False
       step = 1
       while stopdistalongsuccess == False:
@@ -2142,17 +2357,14 @@ class Stop(Database):
     lat, lon = round(loc[0], 7), round(loc[1], 7)
     return Point(lon, lat) # Shapely Point object... try Point.x, Point.y, etc.
     
-  def getShapelyPointProjected(self, source=4326, target=2134):
+  def getShapelyPointProjected(self, source=4326, target=2134, verbose=False):
     '''
     Returns a Shapely point representing the location of the stop,
-    projectedd from the <source> GCS to the <target> PCS.
+    projected from the <source> GCS to the <target> PCS.
     
-    TODO: parametricise GCSs and PCSs.
     2193 = NZGS2000 / NZTM 2000
     2134 = NZGD2000 / UTM zone 59S (default <target>)
     4326 = WGS84 (default <source>)
-    
-    Returns a shapely.geometry.point.Point object.
     '''
     to_epsg=target
     from_epsg=source
@@ -2164,10 +2376,26 @@ class Stop(Database):
     from_srs.ImportFromEPSG(from_epsg)
     
     ogr_geom = ogr.CreateGeometryFromWkb(self.getShapelyPoint().wkb)
+    if verbose: print ogr_geom, self.getShapelyPoint().x, self.getShapelyPoint().y
     ogr_geom.AssignSpatialReference(from_srs)
-    
     ogr_geom.TransformTo(to_srs)
+    if verbose: print ogr_geom
+    if verbose: print loads(ogr_geom.ExportToWkb()).x, loads(ogr_geom.ExportToWkb()).y
     return loads(ogr_geom.ExportToWkb())
+    
+  def countVisitsInDay(self, DayObj):
+    '''
+    Given a Day object, returns the the number of vehicles that stop at
+    self (Stop) on Day, from 00:00.00 to 23:59.59
+    '''
+    q = Template("SELECT trip_id FROM stop_times WHERE stop_id = '$stop_id'")
+    query = q.substitute(stop_id = self.stop_id)
+    self.cur.execute(query)
+    retcount = 0
+    for tripid in self.cur.fetchall():
+      if PTTrip(self.database, tripid[0], DayObj).runstoday:
+        retcount += 1
+    return retcount
     
   def getStopTime(self, TripObj, DayObj):
     '''
@@ -2176,7 +2404,6 @@ class Stop(Database):
     They are in the same order as the stops visited along <TripObj>'s
     route on <DayObj>.
     '''
-    print "GETSTOPTIME IS BEING EXECUTED"
     def prepare_tuple(fetchall, DayObj):
       retlist = []
       for stop in fetchall:
@@ -2185,7 +2412,6 @@ class Stop(Database):
         arrival_hour, arrival_min, arrival_sec, arrival_ssec = arrival_time[0:2], arrival_time[3:5], arrival_time[6:8], arrival_time[9:]
         departure_hour, departure_min, departure_sec, departure_ssec = departure_time[0:2], departure_time[3:5], departure_time[6:8], departure_time[9:]
         startday = TripObj.getTripStartDay(DayObj)
-        print "startday...", startday
         if isinstance(startday, Day):
           if int(arrival_hour) < 24:
             # Then it is not post-midnight
@@ -2207,27 +2433,20 @@ class Stop(Database):
               nextday = DayObj.tomorrowObj
             stop_departure_datetime = nextday.combine(nextday, datetime.time(int(departure_hour), int(departure_min), int(departure_sec), int(departure_ssec)))
           retlist.append((stop_arrival_datetime, stop_departure_datetime))
-      print "retlist...", retlist
       return retlist
       
     # 1. Check if trip runs on DayObj
-    #if TripObj.doesTripRunOn(DayObj, verbose=True) == True:
-    #if TripObj.runstoday == True:
-    print DayObj.dayOfWeekStr.title()
     if TripObj.doesTripRunOn(DayObj) == True:
       # 2. Get the raw arrival and departure times
       q = Template('SELECT arrival_time, departure_time FROM stop_times WHERE stop_id = "$stop_id" and trip_id = "$trip_id" ORDER BY stop_sequence ASC')
       query = q.substitute(stop_id = self.stop_id, trip_id = TripObj.trip_id)
-      print query
       self.cur.execute(query)
       stops = self.cur.fetchall()
-      print "getStopTime.... ", stops
       # Returns a list, because in some cases there are trips that
       # visit the same stop twice (or potentially more) in one trip:
       # loop routes.
       return prepare_tuple(stops, DayObj)
     else:
-      print "TripObj does not run on DayObj."
       return None
 
   def getStopSnappedToRoute(self, TripObj, projected=True, new=True):
@@ -2316,6 +2535,7 @@ class Stop(Database):
          
       return stoploc
       
+      
   def getGivenDistanceAlong(self, TripObj, stop_sequence, factor=None):
     '''
     The database records the distance along the route that the stop is.
@@ -2359,13 +2579,21 @@ if __name__ == '__main__':
   
   # Populating intervals table
   myDatabase = Database(myDB)
-  myDatabase.populateIntervals(DayObj=Day(myDB, datetimeObj=datetime.datetime(2013, 12, 9)), DB=myDB, starti=0, endtime=datetime.time(00, 40))
+  myDatabase.populateIntervals(DayObj=Day(myDB, datetimeObj=datetime.datetime(2013, 12, 7)), DB=myDB, starti=743, endtime=datetime.time(22, 30))
   
   '''
   # Animating
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 8))
-  myDay.animateDay(23*60*60, 24*60*60, 174.7, -41.35, .25, "2:1", sourceproj=2134, projected=True, lon_0=173.0, lat_0=0.0, targetproj='tmerc', outoption="video", placetext="Wellington Public Transport", skip=30, filename='outputtest2.mp4')
+  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 9))
+  myDay.animateDay(0, 24*60*60, 174.7, -41.35, .25, "2:1", sourceproj=2134, projected=True, lon_0=173.0, lat_0=0.0, targetproj='tmerc', outoption="video", placetext="Wellington Public Transport", skip=30, filename='WellingtonMonday24h.mp4')
+  '''
+  
+  '''
+  # Hexbinning
+  myDatabase = Database(myDB)
+  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 9))
+  #myDay.hexbinStopVisits(projected=False)
+  myDay.nvd3FrequencyByMode(n=60*15)
   '''
   ################################################################################
   ################################ End ###########################################
