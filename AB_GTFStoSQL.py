@@ -1058,7 +1058,8 @@ now = time.strftime("%Y%m%d_%H%M%S", time.localtime())
 # Which GTFS? Where is this place?
 ##GTFSLocation = "G:\\Documents\\WellingtonTransportViewer\\Data\\metlink-archiver_20130712_0326\\" # Unzipped folder
 ##GTFSLocation = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/metlink-archiver_20130712_0326_subset/"
-GTFSLocation = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/metlink-archiver_20130712_0326/"
+GTFSLocation = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/metlink-archiver_20130712_0326/" # For December 2013, Wellington
+GTFSLocation = '/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/gtfs_metlink_20130402/' ### Test for errors
 continent = "Oceania"
 country = "New Zealand"
 city = "Wellington"
