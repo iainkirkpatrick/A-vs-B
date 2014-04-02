@@ -139,16 +139,6 @@ from sys import maxint # Snapping
 import bisect
 
 import sqlite3 as dbapi
-# Name of databse
-##db_str = "GTFSSQL_Wellington_20140113_192434.db" # Sunday PT Wellington
-##db_str = "GTFSSQL_Wellington_20140227_165759.db" # Monday PT Wellington
-db_str = "Saturday/GTFSSQL_Wellington_20140402_210506.db" # Saturday PT Wellington
-
-#db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB under Windows, change to necessary filepath
-##db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
-db_pathstr = "/media/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str
-myDB = dbapi.connect(db_pathstr) # Connect to DB
-myDB.text_factory = dbapi.OptimizedUnicode
 
 class CustomException(Exception):
     def __init__(self, value):
@@ -241,7 +231,7 @@ class Database(object):
     self.cur.execute('SELECT * FROM agency')
     return self.cur.fetchall()
   
-  def populateIntervals(self, DB=myDB, DayObj=None, starti=0, endtime=datetime.time(21, 30)):
+  def populateIntervals(self, DB, DayObj=None, starti=0, endtime=datetime.time(21, 30)):
     '''
     Populates the intervals table of self (Database).
     Be careful not to run this method for a database which already has
@@ -2568,6 +2558,17 @@ if __name__ == '__main__':
   ################################################################################
   ########################## Testing Section #####################################
   ################################################################################
+  # Name of databse
+  ##db_str = "GTFSSQL_Wellington_20140113_192434.db" # Sunday PT Wellington
+  ##db_str = "GTFSSQL_Wellington_20140227_165759.db" # Monday PT Wellington
+  db_str = "Saturday/GTFSSQL_Wellington_20140402_210506.db" # Saturday PT Wellington
+
+  #db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB under Windows, change to necessary filepath
+  ##db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
+  db_pathstr = "/media/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str
+  myDB = dbapi.connect(db_pathstr) # Connect to DB
+  myDB.text_factory = dbapi.OptimizedUnicode
+  
   '''
   # Testing
   myDatabase = Database(myDB)
