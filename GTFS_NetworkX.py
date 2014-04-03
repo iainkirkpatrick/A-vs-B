@@ -59,7 +59,7 @@ class DTI_GTFSGraph(object):
         subsettrips = [trip for trip in subsettrips]
         # Apply route subset
         try:
-            if verbose: print(self.subset['routes'])
+            if verbose: print "Limited to these routes: ", self.subset['routes']
             subsettrips = [trip for trip in subsettrips if trip[1] in self.subset['routes']]
         except KeyError:
             # No subset to apply
@@ -67,16 +67,39 @@ class DTI_GTFSGraph(object):
         if verbose: print("There are %i trips after route subset." % len(subsettrips))
         # Apply mode subset
         try:
-            if verbose: print(self.subset['mode'])
+            if verbose: print "Limited to these modes: ", self.subset['mode']
             subsettrips = [trip for trip in subsettrips if trip[2] in self.subset['mode']]
         except KeyError:
             # No subset to apply
             pass
         if verbose: print("There are %i trips after mode subset." % len(subsettrips))
+        # Optional calendar_dates subset
         if self.date is not None:
-            # Do a final subset
-            subsettrips = [PTTrip(self.database.database, trip[0], self.date) for trip in subsettrips]
-            if verbose: print("There are %i trips after calendar_dates check." % len(subsettrips))
+            # Add or remove relevant exceptions
+            def additionsandremovals():
+                exceptions = {"Added": [], "Removed": []}
+                month = self.date.month
+                if month < 10: month = "0" + str(month)
+                day = self.date.day
+                if day < 10: day = "0" + str(day)
+                datestr = str(self.date.year) + "-" + str(month) + "-" + str(day)
+                for exceptiontype in exceptions:
+                    q = Template('SELECT trips.trip_id, calendar_dates.service_id, calendar_dates.exception_text FROM calendar_dates JOIN trips ON trips.service_id = calendar_dates.service_id WHERE calendar_dates.date LIKE "$date%" AND calendar_dates.exception_text = "$exception"')
+                    query = q.substitute(date = datestr, exception = exceptiontype)
+                    self.database.cur.execute(query)
+                    if verbose: print query
+                    exceptions[exceptiontype] = [trip[0] for trip in self.database.cur.fetchall()]
+                return exceptions
+            exceptions =  additionsandremovals()
+            # Removals
+            subsettrips = [trip for trip in subsettrips if trip not in exceptions["Removed"]]
+            if verbose: print("There are %i trips after calendar_dates removals." % len(subsettrips))
+            # Additions
+            for trip in exceptions["Added"]:
+                subsettrips.append(trip)
+            if verbose: print("There are %i trips after calendar_dates additions." % len(subsettrips))
+        subsettrips = [PTTrip(self.database.database, trip[0], self.date) for trip in subsettrips]
+
 
        
 if __name__ == '__main__':
