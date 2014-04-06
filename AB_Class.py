@@ -28,7 +28,8 @@
 #      > bokehFrequencyByMode(n, Show=False, name="frequency.py", title="frequency.py", graphTitle="Wellington Public Transport Services, ")  ::Returns an HTML graph of the number of active service every <n> seconds, on the second, broken down by mode::
 #      > getSittingStops(second)         ::Returns a list of dictionaries which give information about any public transport stops which currently (<second>) have a vehicle sitting at them, on <DayObj>. Correctly handles post-midnight services::
 #      > getAllTrips()                   ::Returns a list of PTTrip objects representing those trips that run at least once on self (Day). Accounts for midnight bug correctly::
-#      > hexbinStops()                   ::Creates a hexbin plot representing the number of stops vehicles make in Day::
+#      > hexbinStops(self, projected=False, sourceproj=4326, targetproj=2134, save=True) :INCOMPLETE:Creates a hexbin plot representing the number of stops vehicles make in Day. Saves by default.::
+#      > nvd3FrequencyByMode(n, name="frequency_nvd3.html", verbose=True) :INCOMPLETE:Creates a Python-NVD3 chart of frequency at <n> temporal resolution from 0000 to 2359 on self::
 
 #    Mode(Database)                      ::A vehicle class, like "Bus", "Rail", "Ferry" and "Cable Car"::
 #      > __init__(database, modetype)    ::<database> is a Database object. <modetype> is a string (as above) of the mode of interest::
@@ -655,8 +656,13 @@ class Day(Database):
   
   def nvd3FrequencyByMode(self, n, name="frequency_nvd3.html", verbose=True):
     '''
+    TODO: Fix the x axis in this chart.
+    TODO: Label the axes.
     Plots frequency of the various PT modes in the city at in intervals of n seconds.
     That is, the numbers of vehicles at operation at any given n, from 0000 to 2359.
+    
+    NOTE: Requires a complete interval chart, and so can only work
+    for the day that this table represents.
     '''
     def appendmodecount(modecount, modetypestr, modetypelist):
       try:
@@ -699,7 +705,8 @@ class Day(Database):
       # Populate dictionary with real values
       for line in retdata:
         mode, moment, count = line[0], line[1], line[2]
-        modecountsmoments[mode][moment] = count
+        weightdict = {'Rail': 285*2, 'Bus': 40, 'Cable Car': 40, 'Ferry': 60}
+        modecountsmoments[mode][moment] = count*weightdict[mode]
       
       return modes, modecountsmoments
     
@@ -713,21 +720,30 @@ class Day(Database):
     if eod not in xdata: xdata.append(eod)
     modes, fullYdata = getData(xdata)
     
+    '''
+    # DEPRECATED
     # Convert xdata to Unix timestamp
     # https://github.com/mbostock/d3/wiki/Time-Formatting
     daytimeobj = self.datetimeObj
-    convertedxdata = [converttimetoUnix(daytimeobj, x) for x in xdata]
-    convertedxdata.sort()
+    x = [converttimetoUnix(daytimeobj, x) for x in xdata]
+    x.sort()
+    '''
+    '''
+    # Convert time to an hour integer
+    x = [int(str(datetime.timedelta(seconds=x)).split(":")[0]) for x in xdata]
+    '''
+    # Resign and just use seconds since midnight
+    x = xdata
 
     # Initialise chart type
     from nvd3 import lineWithFocusChart
-    chart = lineWithFocusChart(name='lineWithFocusChart', x_is_date=True, x_axis_format="%c") # %X is time as "%H:%M:%S"
-    extra_serie = {"tooltip": {"y_start": "", "y_end": " vehicles"}, "date_format": "%c"}
+    chart = lineWithFocusChart(name='lineWithFocusChart')#, x_is_date=True, x_axis_format='%H:%M') # %X is time as "%H:%M:%S"
+    extra_serie = {"tooltip": {"y_start": "", "y_end": " vehicles"}}#, "date_format":"%H:%M"}
     # Build mode specific data list, sorted
     for mode in modes:
-      datalist = [fullYdata[mode][second] for second in xdata]
-      if verbose: print mode, datalist, convertedxdata
-      chart.add_serie(name=mode, y=datalist, x=convertedxdata, extra=extra_serie)
+      y = [fullYdata[mode][second] for second in xdata]
+      if verbose: print mode, y, x
+      chart.add_serie(name=mode, y=y, x=x, extra=extra_serie)
     # Build HTML and JS
     output_file = open('frequency_nvd3.html', 'w')
     chart.buildhtmlheader()
@@ -773,6 +789,13 @@ class Day(Database):
     <filename> = if <outoption> == "video", then this controls the
     filename of the output.
     <flilpath> gives the directory it is to be stored in.
+    
+    # Note, requires a complete INTERVALS table.
+    # If this has not been built, run Database.populateIntervals()
+    # first.
+    # Also note, this method is reasonably fast but is memory-intensive
+    # Finally, you must install the ffmpeg video codec, unless you
+    # want to contribute a routine for a different codec/s yourself...
     '''
     import matplotlib.animation as manimation
     
@@ -808,7 +831,7 @@ class Day(Database):
     
     if matplotlib.__version__ != '1.3.1':
       print "This method is only guaranteed to work with MPL v1.3.1."
-      print "You are running v" + v + "."
+      print "You are running v" + matplotlib.__version__ + "."
     
     # Set up frame of animation
     fig = plt.figure(frameon=False, tight_layout=True)
@@ -1010,7 +1033,9 @@ class Day(Database):
         if filepath != '':
           retunpath = os.getcwd()
           os.chdir(filepath)
-        anim.save("temp_" + filename)
+        ##mywriter = manimation.FFMpegWriter() # Alternative
+        ##anim.save("temp_" + filename, writer=mywriter) # Alternative
+        anim.save("temp_" + filename) # Preferred
         writevideo =  writer + " -r " + str(fps) + " -i %05d.png " + codec + " -qp 0 -b:v " + str(bitrate) + "k -minrate 15000k -maxrate 15000k -bufsize 1835k " + filename
         print "Script is running: " + writevideo
         os.system(writevideo) # Create the video file
@@ -1021,9 +1046,9 @@ class Day(Database):
           os.chdir(returnpath)
         print ">>>>>>> METHOD Day.animateDay() IS COMPLETE <<<<<<<"
         
-  def hexbinStopVisits(self, projected=False, sourceproj=4326, targetproj=2134):
+  def hexbinStopVisits(self, projected=False, sourceproj=4326, targetproj=2134, save=True):
     '''
-    hexbin is an axes method or pyplot function that is essentially
+    hexbinStopVisits is an axes method or pyplot function that is essentially
     a pcolor of a 2-D histogram with hexagonal cells.  It can be
     much more informative than a scatter plot; in the first subplot
     below, try substituting 'scatter' for 'hexbin'.
@@ -1045,8 +1070,6 @@ class Day(Database):
     
     # Get all the trip ids for trips that run on self (Day)
     validtripids = [trip.trip_id for trip in self.getAllTrips()]
-    #validtripids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 5000, 5001, 5002, 5003, 5004, 6700, 6701, 6702, 4908, 2345, 1000, 1001, 1002, 2000, 2001, 2002, 3000, 3001, 4000, 4001, 4002, 4003, 4004, 4005, 4006, 4007, 4008, 4009, 4010, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010]
-    #validtripids = [i for i in range(1,10000)]
     q = "SELECT trip_id, stop_id FROM stop_times ORDER BY trip_id ASC"
     self.cur.execute(q)
     # Count the number of trips that stop at each stop.
@@ -1146,15 +1169,11 @@ class Day(Database):
     plt.suptitle("PT Vehicle Stops", fontsize=20)
     cb = plt.colorbar(format=LogFormatterHB())
     cb.set_label('Count of vehicle stops (logarithmic)')
-    '''
-    plt.subplot(122, aspect='equal')
-    plt.hexbin(x,y,gridsize=50,bins='log', cmap=plt.cm.YlOrRd_r)
-    plt.axis([xmin, xmax, ymin, ymax])
-    plt.title("With a log color scale")
-    cb = plt.colorbar()
-    cb.set_label('log10(N)')
-    '''
-    plt.show()
+    if save:
+      filename = 'hexbinStopVisits_%s.png' % self.dayOfWeekStr
+      plt.savefig(filename)
+    else:
+      plt.show()
         
 class Mode(Database):
   '''
@@ -2561,11 +2580,11 @@ if __name__ == '__main__':
   # Name of databse
   ##db_str = "GTFSSQL_Wellington_20140113_192434.db" # Sunday PT Wellington
   ##db_str = "GTFSSQL_Wellington_20140227_165759.db" # Monday PT Wellington
-  db_str = "Saturday/GTFSSQL_Wellington_20140402_210506.db" # Saturday PT Wellington
+  db_str = "GTFSSQL_Wellington_20140402_210506.db" # Saturday PT Wellington
 
   #db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB under Windows, change to necessary filepath
-  ##db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
-  db_pathstr = "/media/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str
+  db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
+  ##db_pathstr = "/media/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str
   myDB = dbapi.connect(db_pathstr) # Connect to DB
   myDB.text_factory = dbapi.OptimizedUnicode
   
@@ -2577,25 +2596,23 @@ if __name__ == '__main__':
   print myTrip.doesTripRunOn(myDay)
   print myTrip.doesRouteRunOn(myDay)
   '''
-  
+  '''
   # Populating intervals table
   myDatabase = Database(myDB)
-  myDatabase.populateIntervals(DayObj=Day(myDB, datetimeObj=datetime.datetime(2013, 12, 7)), DB=myDB, starti=743, endtime=datetime.time(22, 30))
-  
+  myDatabase.populateIntervals(DayObj=Day(myDB, datetimeObj=datetime.datetime(2013, 12, 7)), DB=myDB, starti=7712, endtime=datetime.time(22, 30))
+  '''
   '''
   # Animating
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 9))
-  myDay.animateDay(0, 24*60*60, 174.7, -41.35, .25, "2:1", sourceproj=2134, projected=True, lon_0=173.0, lat_0=0.0, targetproj='tmerc', outoption="video", placetext="Wellington Public Transport", skip=30, filename='WellingtonMonday24h.mp4')
+  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 7))
+  myDay.animateDay(0, 24*60*60, 174.7, -41.35, .25, "2:1", sourceproj=2134, projected=True, lon_0=173.0, lat_0=0.0, targetproj='tmerc', outoption="video", placetext="Wellington Public Transport", skip=30, filename='WellingtonSaturday24h.mp4')
   '''
   
-  '''
   # Hexbinning
   myDatabase = Database(myDB)
-  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 9))
-  #myDay.hexbinStopVisits(projected=False)
-  myDay.nvd3FrequencyByMode(n=60*15)
-  '''
+  myDay = Day(myDB, datetimeObj=datetime.datetime(2013, 12, 7))
+  myDay.hexbinStopVisits(projected=False)
+  
   ################################################################################
   ################################ End ###########################################
   ################################################################################
