@@ -1,3 +1,17 @@
+# Please note: work in progress until a release candidate is issued.
+#-------------------------------------------------------------------------------
+# Name:         GTFS_NetworkX.py
+# Purpose:      Classes from AB_Class.py (and database from AB_GTFStoSQL.py)
+#               are used to construct a routable network of a GTFS feed and
+#               Open Street Map (OSM) data for the purposes of transportation
+#               analysis.
+#
+#  Classes and completed methods:
+#
+#  DTI_GTFSGraph(Object) ::A GTFS feed transformed into a (possibly subset) NetworkX Graph object::
+#  > __init__(database, date=None, subset={}) ::<database> is a SQLite3 database, constructed by the use of AB_GTFStoSQL.py. <date> allows the network to represent a specific day. <subset> allows the network to be subset to specific modes, trips, days of the week::
+#  > buildSubsetGraph(verbose=False) ::Used by __init__ to retrun self.nxgraph (a NetworkX graph representation)::
+
 import networkx as nx
 from AB_Class import *
 
@@ -33,7 +47,7 @@ class DTI_GTFSGraph(object):
         self.subset = subset
         self.nxgraph = self.buildSubsetGraph()
         
-    def buildSubsetGraph(self, verbose=True):
+    def buildSubsetGraph(self, verbose=False):
         '''
         Using self.subset, applies the requested restritions and returns
         a directed and weighted NetworkX Graph.
@@ -43,7 +57,7 @@ class DTI_GTFSGraph(object):
               as Christmas day. If None, this check is not performed and an
               ordinary [DOW] is assumed.
         '''
-        # Apply day of week subset as it does the most work
+        # Apply day of week subset first as it does the most work
         try:
             if verbose: print("DOW subset: %s" % self.subset['DOW'][0])
             q = Template('SELECT DISTINCT stop_times_amended.trip_id, trips.route_id, routes.route_type_desc FROM stop_times_amended INNER JOIN trips ON stop_times_amended.trip_id=trips.trip_id INNER JOIN routes ON trips.route_id=routes.route_id WHERE stop_times_amended.$DOW = 1')
@@ -61,17 +75,13 @@ class DTI_GTFSGraph(object):
         try:
             if verbose: print "Limited to these routes: ", self.subset['routes']
             subsettrips = [trip for trip in subsettrips if trip[1] in self.subset['routes']]
-        except KeyError:
-            # No subset to apply
-            pass
+        except KeyError: pass # No subset to apply
         if verbose: print("There are %i trips after route subset." % len(subsettrips))
         # Apply mode subset
         try:
             if verbose: print "Limited to these modes: ", self.subset['mode']
             subsettrips = [trip for trip in subsettrips if trip[2] in self.subset['mode']]
-        except KeyError:
-            # No subset to apply
-            pass
+        except KeyError: pass # No subset to apply
         if verbose: print("There are %i trips after mode subset." % len(subsettrips))
         # Optional calendar_dates subset
         if self.date is not None:
@@ -98,8 +108,14 @@ class DTI_GTFSGraph(object):
             for trip in exceptions["Added"]:
                 subsettrips.append(trip)
             if verbose: print("There are %i trips after calendar_dates additions." % len(subsettrips))
+        # Convert all trip IDs into AB_Class PTTrip objects
         subsettrips = [PTTrip(self.database.database, trip[0], self.date) for trip in subsettrips]
-
+        
+        # TODO: For each route, determine the average travel time between each
+        #       pair of stops; create Graph edges
+        # TODO: Create Graph nodes (unique stops for each route)
+        # TODO: OSM data
+        # TODO: Stop entrance lines that reference headways for waiting time
 
        
 if __name__ == '__main__':
@@ -111,6 +127,6 @@ if __name__ == '__main__':
     myDatabase = Database(myDB)
     
     # Create Deterministic & Time-Invariant Graph with subset
-    DTIg = DTI_GTFSGraph(myDatabase, date=None, subset={'routes': ['WBAO091I', 'WBAO091O', 'WRAJVL1O', 'WRAJVL1I'], 'DOW': ['Saturday'], 'mode': ['Bus', 'Rail']})
+    DTIg = DTI_GTFSGraph(myDatabase, date=None, subset={'routes': ['WBAO091I', 'WBAO091O', 'WRAJVL1O', 'WRAJVL1I'], 'DOW': ['Saturday']})
     DTIg.nxgraph
 

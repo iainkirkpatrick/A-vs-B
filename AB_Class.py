@@ -1,12 +1,15 @@
-#pylint: dissable
 #-------------------------------------------------------------------------------
-# Name:         WTV_Class_v1.py
-# Purpose:      Classes for methods to be called for accessing the TransportViewer.db
+# Name:         AB_Class.py
+# Purpose:      Classes for methods to be called for accessing the
+#               SQLite3 database built in AB_GTFStoSQL.py, visualising it, and
+#               performing analysis on it.
+#               Various aspects of the GTFS are constructed into Objects that
+#               can be easily manipulated and extended.
 #
 #  Classes and completed methods:
 
 #    Database(Object)                    ::A GTFS feed transformed into a SQLite database::
-#      > __init__(database)              ::<database> is a SQLite3 database, constructed by the use of WTV_GTFStoSQL_v*.py::
+#      > __init__(database)              ::<database> is a SQLite3 database, constructed by the use of AB_GTFStoSQL.py::
 #      > getFeedInfo()                   ::Returns cur.fetchall() of the feed_info table::
 #      > feedEndDate()                   ::Returns a datetime object representing the end date of the GTFS feed::
 #      > feedStartDate()                 ::Returns a datetime object representing the start date of the GTFS feed::
@@ -101,7 +104,7 @@
 #
 # Author:        Richard Law.
 #
-# Inputs:        Database written by WTV_GTFStoSQL_v*.py
+# Inputs:        Database written by AB_GTFStoSQL.py
 #
 #
 # Created:            20131107
@@ -154,7 +157,7 @@ class Database(object):
   '''
   def __init__(self, database):
     '''
-    <database> is a SQLite3 database, constructed by the use of WTV_GTFStoSQL_v*.py.
+    <database> is a SQLite3 database, constructed by the use of AB_GTFStoSQL.py.
     self.cur returns a cursor on this database for use in almost every other function.
     '''
     self.database = database

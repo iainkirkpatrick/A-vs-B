@@ -1,6 +1,7 @@
 #-------------------------------------------------------------------------------
-# Name:             WTV_GTFStoSQL_v1.py
-# Purpose:          A series of idiosyncratic functions for building GTSFtoSQL.db from raw GTFS agency feeds, on a per-agency basis.
+# Name:             AB_GTFStoSQL.py
+# Purpose:          Functions for building a SQLite3 database of and from raw
+#                   GTFS agency feeds, on a per-agency basis.
 # Data source:      http://www.gtfs-data-exchange.com
 # Type of database: SQLite3
 #
