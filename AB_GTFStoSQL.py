@@ -196,7 +196,8 @@ def createGTSFtoSQL_database(DBName_str):
   '''
   GTFSDB = dbapi.connect(DBName_str) # Connect/create DB
   cur = GTFSDB.cursor() # Create cursor in DB
-  GTFSDB.text_factory = dbapi.OptimizedUnicode
+  # GTFSDB.text_factory = dbapi.OptimizedUnicode
+  GTFSDB.text_factory = str
 
   # Add an agency table
   cur.execute('CREATE TABLE agency(agency_id TEXT, agency_name TEXT, agency_url TEXT, agency_timezone TEXT, agency_lang TEXT, agency_phone TEXT, continent TEXT, country TEXT, city TEXT, PRIMARY KEY(agency_id, city) ON CONFLICT IGNORE)')
@@ -239,11 +240,11 @@ def createGTSFtoSQL_database(DBName_str):
 def populateRoutes(GTFSLocation, database):
   '''
   Populates the routes table of <database> with the information from routes.txt, as well as the equivalent text representations of route_type.
-  <GTFSLocation> is a string of the directory containing a text file called "routes.txt."
+  <GTFSLocation> is a string of the directory containing a text file called "routes.txt"
   Returns <database>, updated with the routes table filled.
 
   route_id > ID that uniquely identifes a route (dataset unique). REQUIRED.
-  agency_id > Defines an agency for a route, referenced from agency.txt. OPTIONAL if there is only one agency, else REQUIRED.
+  agency_id > Defines an agency for a route, referenced from agency.txt OPTIONAL if there is only one agency, else REQUIRED.
   route_short_name > Short name of a route, such as a number, acronym, colour or shortened text that riders use to identfy a route. REQUIRED if route_long_name is empty, else OPTIONAL.
   route_long_name > Long name of a route, generally more descriptive that route_short_name. Often indicates origin and terminus as words. REQUIRED if route_short_name is empty, else OPTIONAL.
   route_desc > Description of a route, fully textual, detailed information. OPTIONAL.
@@ -260,7 +261,7 @@ def populateRoutes(GTFSLocation, database):
 
   '''
   cur = database.cursor()
-  routes = GTFSLocation + "routes.txt."
+  routes = GTFSLocation + "routes.txt"
   with open(routes) as f:
     next(f) # skip header
     for line in f:
@@ -325,9 +326,9 @@ def populateRoutes(GTFSLocation, database):
 
 def populateAgency(GTFSLocation, database, continent, country, city):
   '''
-  Populates the routes table of <database> with the information from agency.txt.
-  Forces agency_lang to lower case despite agency.txt.
-  <GTFSLocation> is a string of the directory containing a text file called "agency.txt."
+  Populates the routes table of <database> with the information from agency.txt
+  Forces agency_lang to lower case despite agency.txt
+  <GTFSLocation> is a string of the directory containing a text file called "agency.txt"
   Returns <database>, updated with the routes table filled.
   <continent>, <country> and <city> are all strings; more information follows.
 
@@ -348,7 +349,7 @@ def populateAgency(GTFSLocation, database, continent, country, city):
   Edited: 20131104
   '''
   cur = database.cursor()
-  agencies = GTFSLocation + "agency.txt."
+  agencies = GTFSLocation + "agency.txt"
   with open(agencies) as f:
     next(f) # skip header
     for line in f:
@@ -374,12 +375,12 @@ def populateAgency(GTFSLocation, database, continent, country, city):
 
 def populateCalendar(GTFSLocation, database):
   '''
-  Populates the calendar table of <database> with the information from calendar.txt.
-  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt."
+  Populates the calendar table of <database> with the information from calendar.txt
+  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt"
   Returns <database>, updated with the calendar table filled.
 
-  service_id > ID that uniquely identifes a set of dates when service is available for one or more routes Dataset unique. References trips.txt. REQUIRED.
-  monday > A binary value (0 or 1) indicating whether the service is valid for all Mondays. 1: the service is valid for all Mondays in the date range (start_date and end_date). 0: the service is not available on Mondays in the date range. Exceptions for particular dates (e.g. holidays) may be listed in calendar_dates.txt. REQUIRED.
+  service_id > ID that uniquely identifes a set of dates when service is available for one or more routes Dataset unique. References trips.txt REQUIRED.
+  monday > A binary value (0 or 1) indicating whether the service is valid for all Mondays. 1: the service is valid for all Mondays in the date range (start_date and end_date). 0: the service is not available on Mondays in the date range. Exceptions for particular dates (e.g. holidays) may be listed in calendar_dates.txt REQUIRED.
   tuesday > See monday. REQUIRED.
   wednesday > See monday. REQUIRED.
   thursday > See monday. REQUIRED.
@@ -395,7 +396,7 @@ def populateCalendar(GTFSLocation, database):
   Edited: 20131104
   '''
   cur = database.cursor()
-  calendars = GTFSLocation + "calendar.txt."
+  calendars = GTFSLocation + "calendar.txt"
   with open(calendars) as f:
     next(f) # skip header
     for line in f:
@@ -434,18 +435,18 @@ def populateCalendar(GTFSLocation, database):
 
 def populateCalendarDates(GTFSLocation, database):
   '''
-  Populates the calendar_dates table of <database> with the information from calendar.txt.
+  Populates the calendar_dates table of <database> with the information from calendar.txt
   The calendar_dates table allows one to explicitly activate or disable service IDs by date.
   It can be used in two ways:
   1. Recommended: Use calendar_dates.txt in conjunction with calendar.txt, where calendar_dates.txt defines any exceptions to the default service categories defined in the calendar.txt file. If your service is generally regular, with a few changes on explicit dates (for example, to accomodate special event services, or a school schedule), this is a good approach.
-  2. Alternate: Omit calendar.txt, and include ALL dates of service in calendar_dates.txt. If your schedule varies most days of the month, or you want to programmatically output service dates without specifying a normal weekly schedule, this approach may be preferable.
+  2. Alternate: Omit calendar.txt, and include ALL dates of service in calendar_dates.txt If your schedule varies most days of the month, or you want to programmatically output service dates without specifying a normal weekly schedule, this approach may be preferable.
 
   If the a service_id value appears in both the calendar and calendar_dates tables, the information in calendar_dates modifies the service information specified in calendar.
 
-  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt."
+  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt"
   Returns <database>, updated with the calendar table filled.
 
-  service_id > ID that uniquely identifes a set of dates when service is available for one or more routes Dataset unique. Each (service_id, date) pair can only appear once. References trips.txt. REQUIRED.
+  service_id > ID that uniquely identifes a set of dates when service is available for one or more routes Dataset unique. Each (service_id, date) pair can only appear once. References trips.txt REQUIRED.
   date > The date field specifies a particular date when service availability is different than the norm. Format: YYYYMMDD. REQUIRED.
   exception_type > Indicates whether service is available on the date specified in the date field. Values: 1 = the service has been added for date. 2 = the service has been removed for date. REQUIRED.
   exception_text > DEFINED BY RICHARD LAW: Textual correspondance of the values in exception_type.
@@ -456,7 +457,7 @@ def populateCalendarDates(GTFSLocation, database):
   Edited: 20131106
   '''
   cur = database.cursor()
-  dates = GTFSLocation + "calendar_dates.txt."
+  dates = GTFSLocation + "calendar_dates.txt"
   with open(dates) as f:
     next(f) # skip header
     for line in f:
@@ -494,10 +495,10 @@ def populateCalendarDates(GTFSLocation, database):
 
 def populateTrips(GTFSLocation, database):
   '''
-  Populates the trips table of <database> with the information from trips.txt.
+  Populates the trips table of <database> with the information from trips.txt
   The trips table details individual PT trips, including the direction, the name and via concordance with routes, shapes, calendar and calendar_dates: the dates, exceptions and spatial representations.
 
-  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt."
+  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt"
   Returns <database>, updated with the calendar table filled.
 
   route_id > ID that uniquely identifes a route. References routes. REQUIRED.
@@ -518,7 +519,7 @@ def populateTrips(GTFSLocation, database):
   Edited: 20131106
   '''
   cur = database.cursor()
-  trips = GTFSLocation + "trips.txt."
+  trips = GTFSLocation + "trips.txt"
   with open(trips) as f:
     next(f) # skip header
     for line in f:
@@ -580,12 +581,12 @@ def populateTrips(GTFSLocation, database):
 
 def populateShapes(GTFSLocation, database):
   '''
-  Populates the shapes table of <database> with the information from shapes.txt.
+  Populates the shapes table of <database> with the information from shapes.txt
   The shapes table details the spatial representation (ordered vertices) of PT routes, identifiable with shape_id.
 
   This script also tests whether the agency has genuinely supplied the length of the routes, or just copied the sequence information. If all of the shape_dist_traveled values are equal to shape_pt_sequence (as in Wellington), then shape_dist_traveled is uniformly set to None.
 
-  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt."
+  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt"
   Returns <database>, updated with the calendar table filled.
 
   shape_id > An ID that uniquely identfies a shape (e.g. a line). NOT DATASET UNIQUE BECAUSE ONE LINE HAS MANY VERTICES. REQUIRED.
@@ -603,7 +604,7 @@ def populateShapes(GTFSLocation, database):
   countMatches = 0 # Set matches to 0
 
   cur = database.cursor()
-  shapes = GTFSLocation + "shapes.txt."
+  shapes = GTFSLocation + "shapes.txt"
   with open(shapes) as f:
     next(f) # skip header
     rows = sum(1 for l in f) - 1 # Counts the number of records, which is very large. Subtracts one to correspond to countMatches, which begins at 0.
@@ -658,12 +659,12 @@ def populateShapes(GTFSLocation, database):
 
 def populateFeedInfo(GTFSLocation, database):
   '''
-  Populates the feed_info table of <database> with the information from feed_info.txt.
+  Populates the feed_info table of <database> with the information from feed_info.txt
   The feed_info table details the agency who created the GTFS feed, including a link to their website for further information.
   Information about the feed itself, rather than the services that the feed describes.
   The publisher of the feed is sometimes a different entity than any of the agencies in the agency table.
 
-  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt."
+  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt"
   Returns <database>, updated with the calendar table filled.
 
   feed_publisher_name > The full name of the organization that publishes the feed. This may be the same as one of the agency_name values in the agency table. REQUIRED.
@@ -679,7 +680,7 @@ def populateFeedInfo(GTFSLocation, database):
   Edited: 20131106
   '''
   cur = database.cursor()
-  feed_infos = GTFSLocation + "feed_info.txt."
+  feed_infos = GTFSLocation + "feed_info.txt"
 
   with open(feed_infos) as g:
     next(g) # skip header
@@ -716,10 +717,10 @@ def populateFeedInfo(GTFSLocation, database):
 
 def populateStops(GTFSLocation, database):
   '''
-  Populates the stops table of <database> with the information from stops.txt.
+  Populates the stops table of <database> with the information from stops.txt
   The stops table has information about PT stops, stations, interchanges and the like that the PT vehicles and passengers coincide at.
 
-  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt."
+  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt"
   Returns <database>, updated with the calendar table filled.
 
   stop_id > An ID that uniquely identifies a stop or station. Multiple routes may use the same stop. The stop_id is dataset unique. REQUIRED.
@@ -728,12 +729,12 @@ def populateStops(GTFSLocation, database):
   stop_desc > A description of a stop. Useful, quality information. Not simply a duplicate of the name of the stop. OPTIONAL.
   stop_lat > The latitude of a stop or station. WGS84. REQUIRED.
   stop_lon > The longitude of a stop or station. WGS84. REQUIRED.
-  zone_id > The fare zone for a stop ID. Zone IDs are required if you want to provide fare information using fare_rules.txt. OPTIONAL.
+  zone_id > The fare zone for a stop ID. Zone IDs are required if you want to provide fare information using fare_rules.txt OPTIONAL.
   stop_url > URL of a web page about that particular stop. Different from the feed_url, agency_url and route_url fields of other tables.
   location_type > Identifies whether this stop ID represents a stop or station. Default is that it is a stop. 0 or blank: stop (where passengers board or disembark). 1: station (structure or area that contains one or more stops).. OPTIONAL.
   location_type_text > DEFINED BY RICHARD LAW: Text correspondence of location_type ("Stop", "Station" or "Hail and Ride"). "Hail and Ride" is a custom option added by Richard, and is deemed to exist if the field has no other specification and the name of the stop contains the text "hail and ride". OPTIONAL.
   parent_station > For stops that are physically located inside stations, the parent_station field identifies the station associated with the stop. To use this field, stops.txt must also contain a row where this stop ID is assigned location_type=1. Contains a stop_id if location_type=0 and the stop is INSIDE a station. Is 0 or blacnk if location_type=0 and the stop is not inside a station. Is 1 if it is a station. OPTIONAL.
-  stop_timezone > The timezone in which this stop or station is located. See: http://en.wikipedia.org/wiki/List_of_tz_zones. If omitted, the stop is assumed to be located in the timezone specified by agency_timezone in agency.txt. OPTIONAL.
+  stop_timezone > The timezone in which this stop or station is located. See: http://en.wikipedia.org/wiki/List_of_tz_zones. If omitted, the stop is assumed to be located in the timezone specified by agency_timezone in agency.txt OPTIONAL.
   wheelchair_boarding > Identifies whether wheelchair boardings are possible from the specified stop or station. 0 or empty: there is no accessibility information for the stop. 1: there exists some accessible path from outside the station to the stop/platform. 2: there exists NO accessible path to the stop/platform.
   wheelchair_boarding_text > DEFINED BY RICHARD LAW: Text correspondence of wheelchair_boarding ("Unknown", "Accessible" or "Inaccessible"). OPTIONAL.
 
@@ -747,7 +748,7 @@ def populateStops(GTFSLocation, database):
   Edited: 20131106
   '''
   cur = database.cursor()
-  stops = GTFSLocation + "stops.txt."
+  stops = GTFSLocation + "stops.txt"
 
   print "Note: populateStops() currently gives an incorrect stop_timezone for GTFS feeds outside New Zealand."
 
@@ -815,10 +816,10 @@ def populateStops(GTFSLocation, database):
 
 def populateStopTimes(GTFSLocation, database):
   '''
-  Populates the stop_times table of <database> with the information from stop_times.txt.
+  Populates the stop_times table of <database> with the information from stop_times.txt
   This table has information about when each trip stops at each stop (so is VERY large).
 
-  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt."
+  <GTFSLocation> is a string of the directory containing a text file called "calendar.txt"
   Returns <database>, updated with the calendar table filled.
 
   trip_id > ID that identifies a trip. References trips table.
@@ -839,7 +840,7 @@ def populateStopTimes(GTFSLocation, database):
   Edited: 20131106
   '''
   cur = database.cursor()
-  stop_times = GTFSLocation + "stop_times.txt."
+  stop_times = GTFSLocation + "stop_times.txt"
 
   print "Reminder: arrival and departure times in the stops table can permissibly be empty or extend beyond 24h."
 
@@ -1046,70 +1047,87 @@ def populateStopTimesAmended(database):
 ############################### Script #########################################
 ################################################################################
 
-# Use SQLlite3 as the database application progamming interface
-import sqlite3 as dbapi
+if __name__ == "__main__":
 
-# Write a new database?
-writeDB = True
+  # Use SQLlite3 as the database application progamming interface
+  import sqlite3 as dbapi
 
-# Time is used to name your DB to avoid overwrites
-import time
-now = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+  # Used for command line argument passing
+  import argparse
 
-# Which GTFS? Where is this place?
-##GTFSLocation = "G:\\Documents\\WellingtonTransportViewer\\Data\\metlink-archiver_20130712_0326\\" # Unzipped folder
-##GTFSLocation = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/metlink-archiver_20130712_0326_subset/"
-GTFSLocation = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/metlink-archiver_20130712_0326/" # For December 2013, Wellington
-GTFSLocation = '/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/gtfs_metlink_20130402/' ### Test for errors
-continent = "Oceania"
-country = "New Zealand"
-city = "Wellington"
-##db_str = "GTFSSQL_" + city + "_" + now + "__SUBSET__.db"
-db_str = "GTFSSQL_" + city + "_" + now + ".db"
-db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB
+  # Cmd line args setup
+  parser = argparse.ArgumentParser()
+  parser.add_argument("GTFSpath", help="enter the path to the folder containing input GTFS files (must have trailing slash '/')")
+  parser.add_argument("dbpath", help="enter the path to generate output SQLite db (must have trailing slash '/')")
+  parser.add_argument("continent", help="enter the continent the GTFS feed is from")
+  parser.add_argument("country", help="enter the country the GTFS feed is from")
+  parser.add_argument("city", help="enter the city the GTFS feed is from")
+  args = parser.parse_args()
 
-if writeDB == True:
+  # Write a new database?
+  writeDB = True
 
-  # Initialise database and write (empty) tables according to database schema
-  GTFSDB = createGTSFtoSQL_database(db_pathstr)
+  # Time is used to name your DB to avoid overwrites
+  import time
+  now = time.strftime("%Y%m%d_%H%M%S", time.localtime())
 
-  # Routes (20131104)
-  populateRoutes(GTFSLocation, GTFSDB)
+  # # Which GTFS? Where is this place?
+  # ##GTFSLocation = "G:\\Documents\\WellingtonTransportViewer\\Data\\metlink-archiver_20130712_0326\\" # Unzipped folder
+  # ##GTFSLocation = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/metlink-archiver_20130712_0326_subset/"
+  # GTFSLocation = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/metlink-archiver_20130712_0326/" # For December 2013, Wellington
+  # GTFSLocation = '/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/gtfs_metlink_20130402/' ### Test for errors
+  # continent = "Oceania"
+  # country = "New Zealand"
+  # city = "Wellington"
+  # ##db_str = "GTFSSQL_" + city + "_" + now + "__SUBSET__.db"
+  # db_str = "GTFSSQL_" + city + "_" + now + ".db"
+  # db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB
 
-  # Agencies (20131104)
-  populateAgency(GTFSLocation, GTFSDB, continent, country, city)
+  db_str = "GTFSSQL_" + args.city + "_" + now + ".db"
+  db_pathstr = args.dbpath + db_str
 
-  # Calendar (20131104)
-  populateCalendar(GTFSLocation, GTFSDB)
+  if writeDB == True:
 
-  # Calendar dates (exceptions) (20131106)
-  populateCalendarDates(GTFSLocation, GTFSDB)
+    # Initialise database and write (empty) tables according to database schema
+    GTFSDB = createGTSFtoSQL_database(db_pathstr)
 
-  # Trips (20131106)
-  populateTrips(GTFSLocation, GTFSDB)
+    # Routes (20131104)
+    populateRoutes(args.GTFSpath, GTFSDB)
 
-  # Shapes (20131106)
-  populateShapes(GTFSLocation, GTFSDB)
+    # Agencies (20131104)
+    populateAgency(args.GTFSpath, GTFSDB, args.continent, args.country, args.city)
 
-  # Feed publisher (20131106)
-  populateFeedInfo(GTFSLocation, GTFSDB)
+    # Calendar (20131104)
+    populateCalendar(args.GTFSpath, GTFSDB)
 
-  # Stops (20131106)
-  populateStops(GTFSLocation, GTFSDB)
+    # Calendar dates (exceptions) (20131106)
+    populateCalendarDates(args.GTFSpath, GTFSDB)
 
-  # Stop times (20131106)
-  populateStopTimes(GTFSLocation, GTFSDB)
+    # Trips (20131106)
+    populateTrips(args.GTFSpath, GTFSDB)
 
-  # Amended stop times (20131224)
-  populateStopTimesAmended(GTFSDB)
-  
-  print "TODO Note: Intervals table is not populated by this script."
+    # Shapes (20131106)
+    populateShapes(args.GTFSpath, GTFSDB)
 
-  print "Database written: " + db_str + " (" + db_pathstr + ")"
+    # Feed publisher (20131106)
+    populateFeedInfo(args.GTFSpath, GTFSDB)
 
-else:
+    # Stops (20131106)
+    populateStops(args.GTFSpath, GTFSDB)
 
-  print "No database written."
+    # Stop times (20131106)
+    populateStopTimes(args.GTFSpath, GTFSDB)
+
+    # Amended stop times (20131224)
+    populateStopTimesAmended(GTFSDB)
+    
+    print "TODO Note: Intervals table is not populated by this script."
+
+    print "Database written: " + db_str + " (" + db_pathstr + ")"
+
+  else:
+
+    print "No database written."
 
 
 ## Quick update to an existing table
