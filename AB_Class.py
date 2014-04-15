@@ -127,6 +127,9 @@ Before using script change filepath for database (db_pathstr) and potentially na
 import time
 import os
 
+# Used for command line argument passing
+import argparse
+
 from string import Template
 import datetime
 
@@ -2583,12 +2586,18 @@ if __name__ == '__main__':
   # Name of databse
   ##db_str = "GTFSSQL_Wellington_20140113_192434.db" # Sunday PT Wellington
   ##db_str = "GTFSSQL_Wellington_20140227_165759.db" # Monday PT Wellington
-  db_str = "GTFSSQL_Wellington_20140402_210506.db" # Saturday PT Wellington
+  # db_str = "GTFSSQL_Wellington_20140402_210506.db" # Saturday PT Wellington
 
-  #db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB under Windows, change to necessary filepath
-  db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
-  ##db_pathstr = "/media/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str
-  myDB = dbapi.connect(db_pathstr) # Connect to DB
+  # #db_pathstr = "G:\\Documents\\WellingtonTransportViewer\\Data\\Databases\\" + db_str # Path and name of DB under Windows, change to necessary filepath
+  # db_pathstr = "/media/alphabeta/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str # Path and name of DB under Linux with RESQUILLEUR, change to necessary filepath
+  # ##db_pathstr = "/media/RESQUILLEUR/Documents/WellingtonTransportViewer/Data/Databases/" + db_str
+  
+  # Cmd line args setup
+  parser = argparse.ArgumentParser()
+  parser.add_argument("dbpath", help="enter the path to SQLite db file (must end with '.db')")
+  args = parser.parse_args()
+
+  myDB = dbapi.connect(args.dbpath) # Connect to DB
   myDB.text_factory = dbapi.OptimizedUnicode
   
   '''
